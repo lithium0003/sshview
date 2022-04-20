@@ -1,0 +1,6 @@
+[submodule "library/openssl"]
+	path = library/openssl
+	url = https://github.com/openssl/openssl.git
+[submodule "library/libssh"]
+	path = library/libssh
+	url = https://git.libssh.org/projects/libssh.git
