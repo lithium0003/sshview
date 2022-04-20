@@ -6,12 +6,17 @@
 //
 
 import SwiftUI
+import libssh
 
 @main
 struct sshviewApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
+                .environmentObject(ServerProfile())
+                .environmentObject(UserProfile())
+                .environmentObject(TabDataList())
+                .environmentObject(SSHDaemon())
         }
     }
 }
