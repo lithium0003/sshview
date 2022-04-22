@@ -13,6 +13,7 @@ struct CommandView: View {
     @ObservedObject var term: TerminalScreen
     
     @State var remainStdIn: [UInt8] = []
+    @State var isEOF = false
     @Binding var bufferStdOut: [UInt8]
 
     @State var screenView: AnyView = AnyView(EmptyView())
@@ -31,10 +32,13 @@ struct CommandView: View {
         }
     }
     
-    func stdin()->[UInt8] {
+    func stdin()->[UInt8]? {
         DispatchQueue.main.sync {
             let value: [UInt8] = remainStdIn
             remainStdIn = []
+            if isEOF, value.isEmpty {
+                return nil
+            }
             return value
         }
     }
@@ -45,7 +49,10 @@ struct CommandView: View {
                 Spacer()
                 Button(role: .destructive, action: {
                     remainStdIn += [3]
-                    isActive = false
+                    isEOF = true
+                    DispatchQueue.main.asyncAfter(deadline: .now()+5) {
+                        isActive = false
+                    }
                 }, label: {
                     Image(systemName: "trash")
                     Text("Break")

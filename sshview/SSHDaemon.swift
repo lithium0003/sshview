@@ -65,7 +65,7 @@ class LocalPortForward {
         var reuse = 1
         print("setsockopt")
         guard setsockopt(serverSockfd, SOL_SOCKET, SO_REUSEADDR, withUnsafePointer(to: &reuse) { $0 }, socklen_t(MemoryLayout.size(ofValue: reuse))) >= 0 else {
-            perror("setsockopt(SO_REUSEADDR) failed");
+            perror("setsockopt(SO_REUSEADDR) failed")
             close(serverSockfd)
             return nil
         }
@@ -233,14 +233,14 @@ class TerminalSession {
     
     var stdoutFnc: ((ArraySlice<UInt8>)->Void)?
     var stderrFnc: ((ArraySlice<UInt8>)->Void)?
-    var stdinFnc: (()->[UInt8])?
+    var stdinFnc: (()->[UInt8]?)?
 
     var channel: ssh_channel!
     
     let buflen = 4 * 1024
     lazy var buffer = [UInt8](repeating: 0, count: buflen)
 
-    init?(queue: DispatchQueue, session: ssh_session, stdinFnc: (()->[UInt8])?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
+    init?(queue: DispatchQueue, session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
         print("createTerminal")
         self.queue = queue
         queue.async { [self] in
@@ -336,8 +336,8 @@ class TerminalSession {
         let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(buflen), 0, 0) }
         if nbytes < 0 {
             print("ssh_channel_read() error")
-            ssh_channel_close(channel);
-            ssh_channel_send_eof(channel);
+            ssh_channel_close(channel)
+            ssh_channel_send_eof(channel)
             ssh_channel_free(channel)
             isOpen = false
         }
@@ -348,23 +348,31 @@ class TerminalSession {
         else {
             stdoutFnc?([])
         }
-        if let inputbuffer = stdinFnc?(), inputbuffer.count > 0 {
-            let nwritten = ssh_channel_write(channel, inputbuffer, UInt32(inputbuffer.count))
-            if nwritten != inputbuffer.count {
-                print("\(nwritten) of \(inputbuffer.count) write, error")
-                ssh_channel_close(channel);
-                ssh_channel_send_eof(channel);
-                ssh_channel_free(channel)
-                isOpen = false
+        if let stdinFnc = stdinFnc {
+            if let inputbuffer = stdinFnc() {
+                if inputbuffer.count > 0 {
+                    let nwritten = ssh_channel_write(channel, inputbuffer, UInt32(inputbuffer.count))
+                    if nwritten != inputbuffer.count {
+                        print("\(nwritten) of \(inputbuffer.count) write, error")
+                        ssh_channel_close(channel)
+                        ssh_channel_send_eof(channel)
+                        ssh_channel_free(channel)
+                        isOpen = false
+                    }
+                    else {
+                        print("successfly write \(nwritten)")
+                    }
+                }
             }
             else {
-                print("successfly write \(nwritten)")
+                // input is done
+                ssh_channel_send_eof(channel)
             }
         }
         
         if isOpen, ssh_channel_is_open(channel) == 0, ssh_channel_is_eof(channel) != 0 {
-            ssh_channel_close(channel);
-            ssh_channel_send_eof(channel);
+            ssh_channel_close(channel)
+            ssh_channel_send_eof(channel)
             ssh_channel_free(channel)
             isOpen = false
         }
@@ -377,14 +385,14 @@ class CommandSession {
     
     var stdoutFnc: ((ArraySlice<UInt8>)->Void)?
     var stderrFnc: ((ArraySlice<UInt8>)->Void)?
-    var stdinFnc: (()->[UInt8])?
+    var stdinFnc: (()->[UInt8]?)?
 
     var channel: ssh_channel!
 
     let buflen = 4 * 1024
     lazy var buffer = [UInt8](repeating: 0, count: buflen)
 
-    init? (queue: DispatchQueue, session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8])?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
+    init? (queue: DispatchQueue, session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
         self.queue = queue
         self.stdinFnc = stdinFnc
         self.stdoutFnc = stdoutFnc
@@ -443,8 +451,8 @@ class CommandSession {
         let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(buflen), 0, 0) }
         if nbytes < 0 {
             print("ssh_channel_read() error")
-            ssh_channel_close(channel);
-            ssh_channel_send_eof(channel);
+            ssh_channel_close(channel)
+            ssh_channel_send_eof(channel)
             ssh_channel_free(channel)
             isOpen = false
         }
@@ -458,8 +466,8 @@ class CommandSession {
         let nbytes2 = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(buflen), 1, 0) }
         if nbytes2 < 0 {
             print("ssh_channel_read() error")
-            ssh_channel_close(channel);
-            ssh_channel_send_eof(channel);
+            ssh_channel_close(channel)
+            ssh_channel_send_eof(channel)
             ssh_channel_free(channel)
             isOpen = false
         }
@@ -470,23 +478,31 @@ class CommandSession {
         else {
             stderrFnc?([])
         }
-        if let inputbuffer = stdinFnc?(), inputbuffer.count > 0 {
-            let nwritten = ssh_channel_write(channel, inputbuffer, UInt32(inputbuffer.count))
-            if nwritten != inputbuffer.count {
-                print("\(nwritten) of \(inputbuffer.count) write, error")
-                ssh_channel_close(channel);
-                ssh_channel_send_eof(channel);
-                ssh_channel_free(channel)
-                isOpen = false
+        if let stdinFnc = stdinFnc {
+            if let inputbuffer = stdinFnc() {
+                if inputbuffer.count > 0 {
+                    let nwritten = ssh_channel_write(channel, inputbuffer, UInt32(inputbuffer.count))
+                    if nwritten != inputbuffer.count {
+                        print("\(nwritten) of \(inputbuffer.count) write, error")
+                        ssh_channel_close(channel)
+                        ssh_channel_send_eof(channel)
+                        ssh_channel_free(channel)
+                        isOpen = false
+                    }
+                    else {
+                        print("successfly write \(nwritten)")
+                    }
+                }
             }
             else {
-                print("successfly write \(nwritten)")
+                ssh_channel_request_send_signal(channel, "INT")
+                ssh_channel_send_eof(channel)
             }
         }
         
         if isOpen, ssh_channel_is_open(channel) == 0, ssh_channel_is_eof(channel) != 0 {
-            ssh_channel_close(channel);
-            ssh_channel_send_eof(channel);
+            ssh_channel_close(channel)
+            ssh_channel_send_eof(channel)
             ssh_channel_free(channel)
             isOpen = false
         }
@@ -553,14 +569,14 @@ class SessionHandles {
         return true
     }
     
-    func runCommand(comand: [UInt8], stdinFnc: (()->[UInt8])?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
+    func runCommand(comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
         guard let newCommand = CommandSession(queue: queue, session: session, comand: comand, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc) else {
             return
         }
         commandSessions.append(newCommand)
     }
     
-    func createTerminal(stdinFnc: (()->[UInt8])?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
+    func createTerminal(stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
         guard let newTerminal = TerminalSession(queue: queue, session: session, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc) else {
             return
         }
@@ -750,7 +766,7 @@ class SSHDaemon: ObservableObject {
         return false
     }
     
-    func runCommand(session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8])?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?)  {
+    func runCommand(session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?)  {
         for i in 0..<connections.count {
             if connections[i].session == session {
                 connections[i].runCommand(comand: comand, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc)
@@ -758,7 +774,7 @@ class SSHDaemon: ObservableObject {
         }
     }
     
-    func createTerminal(session: ssh_session, stdinFnc: (()->[UInt8])?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
+    func createTerminal(session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
         for i in 0..<connections.count {
             if connections[i].session == session {
                 connections[i].createTerminal(stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc)

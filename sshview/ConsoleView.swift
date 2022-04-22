@@ -33,7 +33,7 @@ struct ConsoleView: View {
         }
     }
     
-    func stdin()->[UInt8] {
+    func stdin()->[UInt8]? {
         DispatchQueue.main.sync {
             let value: [UInt8] = remainStdIn
             remainStdIn = []

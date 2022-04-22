@@ -146,7 +146,7 @@ struct InvisibleTextViewWrapper: UIViewRepresentable {
 
 class stdHandlers: ObservableObject {
     @Published var stdOutFcn: ((ArraySlice<UInt8>)->Void)?
-    @Published var stdInFcn: (()->[UInt8])?
+    @Published var stdInFcn: (()->[UInt8]?)?
     @Published var screeSizeChane: ((Int,Int)->Void)?
 }
 
