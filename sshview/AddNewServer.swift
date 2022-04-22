@@ -16,14 +16,17 @@ struct AddNewServer: View {
     @State private var portstr = ""
     @State private var userid = UUID()
     @State private var proxyServer = UUID()
+    @State private var connType = 0
+    @State private var runCommand = ""
+    @State private var grepCommand = ""
 
     @Binding var isShowCurrentView: Bool
     @State private var isShowSubView = false
     
     var body: some View {
         VStack {
-            Spacer()
             Group {
+                Spacer()
                 TextField("Tag", text: $idname)
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.default)
@@ -37,9 +40,7 @@ struct AddNewServer: View {
                     .keyboardType(.numberPad)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
-            }
-            Spacer()
-            Group {
+                Spacer()
                 Button(action: {
                     self.isShowSubView = true
                 }) {
@@ -54,17 +55,60 @@ struct AddNewServer: View {
                     }
                 }
             }
-            Spacer()
-            HStack{
-                Text("Proxy jump server")
-                Picker("Proxy server", selection: $proxyServer) {
-                    Text("none")
-                    ForEach(serverProfile.servers) { item in
-                        Text(item.title)
+            Group {
+                Spacer()
+                HStack{
+                    Text("Proxy jump server")
+                    Picker("Proxy server", selection: $proxyServer) {
+                        Text("none")
+                        ForEach(serverProfile.servers) { item in
+                            Text(item.title)
+                        }
                     }
                 }
+                Spacer()
             }
-            Spacer()
+            Group {
+                Text("Connection type")
+                Picker("Connection Type", selection: $connType) {
+                    Text("Terminal").tag(0)
+                    Text("Command").tag(1)
+                    Text("WebBrowser").tag(2)
+                }
+                .pickerStyle(.segmented)
+                if connType == 1 {
+                    ZStack {
+                        if runCommand.isEmpty {
+                            Text("Run commands on remote")
+                                .padding()
+                        }
+                        TextEditor(text: $runCommand)
+                            .keyboardType(.asciiCapable)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .opacity(runCommand.isEmpty ? 0.25 : 1)
+                            .padding()
+
+                    }
+                }
+                else if connType == 2 {
+                    TextField("Grep regex string for output to find port", text: $grepCommand)
+                    ZStack {
+                        if runCommand.isEmpty {
+                            Text("Run commands on remote")
+                                .padding()
+                        }
+                        TextEditor(text: $runCommand)
+                            .keyboardType(.asciiCapable)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .opacity(runCommand.isEmpty ? 0.25 : 1)
+                            .padding()
+
+                    }
+                }
+                Spacer()
+            }
             Button(action: {
                 guard !idname.isEmpty else {
                     return
@@ -85,7 +129,16 @@ struct AddNewServer: View {
                 else {
                     proxy = proxyServer
                 }
-                let newItem = ServerItem(title: idname, remoteHost: hostname, remotePort: port, userIDtag: userid, proxyServerID: proxy)
+                var remoteCommand: String?
+                var grepStr: String?
+                if connType == 1 {
+                    remoteCommand = runCommand
+                }
+                else if connType == 2 {
+                    remoteCommand = runCommand
+                    grepStr = grepCommand
+                }
+                let newItem = ServerItem(title: idname, remoteHost: hostname, remotePort: port, userIDtag: userid, proxyServerID: proxy, serverCommand: remoteCommand, grepPortFoward: grepStr)
                 serverProfile.servers.append(newItem)
                 
                 isShowCurrentView = false

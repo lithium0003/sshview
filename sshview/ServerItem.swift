@@ -15,6 +15,8 @@ struct ServerItem: Identifiable, Equatable, Codable {
     var userIDtag: UUID = UUID()
     var proxyServerID: UUID?
     var serverKeyHash: [UInt8] = []
+    var serverCommand: String?
+    var grepPortFoward: String?
 }
 
 class ServerProfile: ObservableObject {

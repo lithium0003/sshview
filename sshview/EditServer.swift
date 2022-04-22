@@ -19,6 +19,9 @@ struct EditServer: View {
     @State private var serverKey = ""
     @State private var userid = UUID()
     @State private var proxyServer = UUID()
+    @State private var connType = 0
+    @State private var runCommand = ""
+    @State private var grepCommand = ""
 
     @Binding var isShowCurrentView: Bool
     @State private var isShowSubView = false
@@ -26,6 +29,7 @@ struct EditServer: View {
     var body: some View {
         VStack {
             Group {
+                Spacer()
                 TextField("Tag", text: $idname)
                     .textFieldStyle(.roundedBorder)
                     .keyboardType(.default)
@@ -39,8 +43,7 @@ struct EditServer: View {
                     .keyboardType(.numberPad)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
-            }
-            Group {
+                Spacer()
                 Button(action: {
                     self.isShowSubView = true
                 }) {
@@ -55,14 +58,59 @@ struct EditServer: View {
                     }
                 }
             }
-            HStack{
-                Text("Proxy jump server")
-                Picker("Proxy server", selection: $proxyServer) {
-                    Text("none").tag(UUID())
-                    ForEach(serverProfile.servers) { item in
-                        Text(item.title)
+            Group {
+                Spacer()
+                HStack{
+                    Text("Proxy jump server")
+                    Picker("Proxy server", selection: $proxyServer) {
+                        Text("none")
+                        ForEach(serverProfile.servers) { item in
+                            Text(item.title)
+                        }
                     }
                 }
+                Spacer()
+            }
+            Group {
+                Text("Connection type")
+                Picker("Connection Type", selection: $connType) {
+                    Text("Terminal").tag(0)
+                    Text("Command").tag(1)
+                    Text("WebBrowser").tag(2)
+                }
+                .pickerStyle(.segmented)
+                if connType == 1 {
+                    ZStack {
+                        if runCommand.isEmpty {
+                            Text("Run commands on remote")
+                                .padding()
+                        }
+                        TextEditor(text: $runCommand)
+                            .keyboardType(.asciiCapable)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .opacity(runCommand.isEmpty ? 0.25 : 1)
+                            .padding()
+
+                    }
+                }
+                else if connType == 2 {
+                    TextField("Grep regex string for output to find port", text: $grepCommand)
+                    ZStack {
+                        if runCommand.isEmpty {
+                            Text("Run commands on remote")
+                                .padding()
+                        }
+                        TextEditor(text: $runCommand)
+                            .keyboardType(.asciiCapable)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .opacity(runCommand.isEmpty ? 0.25 : 1)
+                            .padding()
+
+                    }
+                }
+                Spacer()
             }
             Group {
                 Button(action: {
@@ -96,12 +144,23 @@ struct EditServer: View {
                     else {
                         proxy = proxyServer
                     }
+                    var remoteCommand: String?
+                    var grepStr: String?
+                    if connType == 1 {
+                        remoteCommand = runCommand
+                    }
+                    else if connType == 2 {
+                        remoteCommand = runCommand
+                        grepStr = grepCommand
+                    }
                     serverProfile.servers[serverIdx].title = idname
                     serverProfile.servers[serverIdx].remoteHost = hostname
                     serverProfile.servers[serverIdx].remotePort = port
                     serverProfile.servers[serverIdx].userIDtag = userid
                     serverProfile.servers[serverIdx].proxyServerID = proxy
-                    
+                    serverProfile.servers[serverIdx].serverCommand = remoteCommand
+                    serverProfile.servers[serverIdx].grepPortFoward = grepStr
+
                     isShowCurrentView = false
                 }) {
                     Text("Done")
@@ -128,6 +187,19 @@ struct EditServer: View {
             userid = serverProfile.servers[serverIdx].userIDtag
             proxyServer = serverProfile.servers[serverIdx].proxyServerID ?? UUID()
             serverKey = serverProfile.servers[serverIdx].serverKeyHash.map({ String(format: "%02x", $0) }).joined(separator: ":")
+            if let command = serverProfile.servers[serverIdx].serverCommand {
+                runCommand = command
+                if let grep = serverProfile.servers[serverIdx].grepPortFoward {
+                    connType = 2
+                    grepCommand = grep
+                }
+                else {
+                    connType = 1
+                }
+            }
+            else {
+                connType = 0
+            }
         }
     }
 }

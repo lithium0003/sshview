@@ -28,6 +28,8 @@
 		3F60BC9428108A5800E6892C /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8228108A5800E6892C /* ConsoleView.swift */; };
 		3F60BC9528108A5800E6892C /* SSHDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8328108A5800E6892C /* SSHDaemon.swift */; };
 		3F60BC9628108A5800E6892C /* ServerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8428108A5800E6892C /* ServerRow.swift */; };
+		3F60BC9828109D2A00E6892C /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC9728109D2A00E6892C /* TerminalView.swift */; };
+		3F60BC9A28109E3000E6892C /* CommandView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC9928109E3000E6892C /* CommandView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +55,8 @@
 		3F60BC8228108A5800E6892C /* ConsoleView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
 		3F60BC8328108A5800E6892C /* SSHDaemon.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SSHDaemon.swift; sourceTree = "<group>"; };
 		3F60BC8428108A5800E6892C /* ServerRow.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ServerRow.swift; sourceTree = "<group>"; };
+		3F60BC9728109D2A00E6892C /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
+		3F60BC9928109E3000E6892C /* CommandView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,25 +89,27 @@
 		3F60BC642810872700E6892C /* sshview */ = {
 			isa = PBXGroup;
 			children = (
-				3F60BC7D28108A5800E6892C /* AddNewId.swift */,
-				3F60BC8128108A5800E6892C /* AddNewServer.swift */,
-				3F60BC8228108A5800E6892C /* ConsoleView.swift */,
-				3F60BC7328108A5800E6892C /* EditServer.swift */,
-				3F60BC7E28108A5800E6892C /* LocalWebView.swift */,
-				3F60BC7528108A5800E6892C /* MainView.swift */,
+				3F60BC652810872700E6892C /* sshviewApp.swift */,
 				3F60BC7F28108A5800E6892C /* RootView.swift */,
-				3F60BC7A28108A5800E6892C /* ServerConnection.swift */,
+				3F60BC7528108A5800E6892C /* MainView.swift */,
+				3F60BC8128108A5800E6892C /* AddNewServer.swift */,
+				3F60BC7328108A5800E6892C /* EditServer.swift */,
 				3F60BC7428108A5800E6892C /* ServerItem.swift */,
 				3F60BC8028108A5800E6892C /* ServerList.swift */,
 				3F60BC8428108A5800E6892C /* ServerRow.swift */,
-				3F60BC8328108A5800E6892C /* SSHDaemon.swift */,
+				3F60BC7D28108A5800E6892C /* AddNewId.swift */,
 				3F60BC7B28108A5800E6892C /* UserIdDetail.swift */,
 				3F60BC7828108A5800E6892C /* UserIdItem.swift */,
 				3F60BC7628108A5800E6892C /* UserIdList.swift */,
 				3F60BC7C28108A5800E6892C /* UserIdRow.swift */,
+				3F60BC8328108A5800E6892C /* SSHDaemon.swift */,
+				3F60BC7A28108A5800E6892C /* ServerConnection.swift */,
+				3F60BC8228108A5800E6892C /* ConsoleView.swift */,
+				3F60BC9928109E3000E6892C /* CommandView.swift */,
+				3F60BC9728109D2A00E6892C /* TerminalView.swift */,
+				3F60BC7E28108A5800E6892C /* LocalWebView.swift */,
 				3F60BC7928108A5800E6892C /* WebToolBarView.swift */,
 				3F60BC7728108A5800E6892C /* WebViewTest.swift */,
-				3F60BC652810872700E6892C /* sshviewApp.swift */,
 				3F60BC692810872900E6892C /* Assets.xcassets */,
 				3F60BC6B2810872900E6892C /* Preview Content */,
 			);
@@ -188,6 +194,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3F60BC9828109D2A00E6892C /* TerminalView.swift in Sources */,
 				3F60BC8D28108A5800E6892C /* UserIdDetail.swift in Sources */,
 				3F60BC8528108A5800E6892C /* EditServer.swift in Sources */,
 				3F60BC9528108A5800E6892C /* SSHDaemon.swift in Sources */,
@@ -204,6 +211,7 @@
 				3F60BC8E28108A5800E6892C /* UserIdRow.swift in Sources */,
 				3F60BC9228108A5800E6892C /* ServerList.swift in Sources */,
 				3F60BC8F28108A5800E6892C /* AddNewId.swift in Sources */,
+				3F60BC9A28109E3000E6892C /* CommandView.swift in Sources */,
 				3F60BC8C28108A5800E6892C /* ServerConnection.swift in Sources */,
 				3F60BC8628108A5800E6892C /* ServerItem.swift in Sources */,
 				3F60BC9428108A5800E6892C /* ConsoleView.swift in Sources */,
