@@ -30,7 +30,8 @@ struct AddNewId: View {
     @Binding var isShowSubView: Bool
     @State private var showingExporter = false
     @State private var pubFile = TextFile()
-
+    @State private var isImporting = false
+    
     var body: some View {
         VStack {
             Spacer()
@@ -181,11 +182,40 @@ struct AddNewId: View {
                 }
                 .padding()
             })
-            Text("or, paste private key here")
+            HStack {
+                Text("or, paste private key")
+                Button(action: {
+                    isImporting = true
+                }) {
+                    Image(systemName: "doc.text")
+                        .font(.title)
+                }
+                .fileImporter(isPresented: $isImporting, allowedContentTypes: [.text]) { result in
+                    if case .success = result {
+                        do {
+                            let url = try result.get()
+                            guard url.startAccessingSecurityScopedResource() else {
+                                return
+                            }
+                            defer {
+                                url.stopAccessingSecurityScopedResource()
+                            }
+                            privateKey = try String(contentsOf: url)
+                        }
+                        catch {
+                            print(error)
+                        }
+                    }
+                }
+            }
             TextEditor(text: $privateKey)
                 .keyboardType(.alphabet)
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.gray, lineWidth: 1)
+                )
             SecureField("private key passphrease", text: $passphease)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.alphabet)
@@ -209,6 +239,7 @@ struct AddNewId: View {
                 isShowSubView = false
             }) {
                 Text("Done")
+                    .font(.title)
             }
             Spacer()
         }

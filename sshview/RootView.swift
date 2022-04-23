@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct TabDataItem: Identifiable {
-    var id = UUID()
+    var id: UUID
     var title: Text
     var image: Image
     var tabView: AnyView
@@ -16,14 +16,15 @@ struct TabDataItem: Identifiable {
 }
 
 class TabDataList: ObservableObject {
-    @Published var tabData: [TabDataItem]
+    @Published var tabIdx: [UUID] = []
+    @Published var tabData: [UUID: TabDataItem] = [:]
     @Published var selectedTab = UUID()
     
     init() {
-        tabData = [
-            TabDataItem(title: Text("Main"), image: Image(systemName: "gear"), tabView: AnyView(MainView())),
-        ]
-        selectedTab = tabData[0].id
+        let id = UUID()
+        tabData[id] = TabDataItem(id: id, title: Text("Main"), image: Image(systemName: "gear"), tabView: AnyView(MainView()))
+        tabIdx.append(id)
+        selectedTab = id
     }
 }
 
@@ -32,12 +33,12 @@ struct RootView: View {
     
     var body: some View {
         TabView(selection: $tabData.selectedTab) {
-            ForEach(tabData.tabData) { tabItem in
-                tabItem.tabView
+            ForEach(tabData.tabIdx, id: \.self) { idx in
+                tabData.tabData[idx]!.tabView
                     .tabItem {
-                        tabItem.title
-                        tabItem.image
-                    }.tag(tabItem.id)
+                        tabData.tabData[idx]!.title
+                        tabData.tabData[idx]!.image
+                    }.tag(idx)
             }
         }
     }

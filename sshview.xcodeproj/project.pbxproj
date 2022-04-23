@@ -24,7 +24,6 @@
 		3F60BC9028108A5800E6892C /* LocalWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC7E28108A5800E6892C /* LocalWebView.swift */; };
 		3F60BC9128108A5800E6892C /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC7F28108A5800E6892C /* RootView.swift */; };
 		3F60BC9228108A5800E6892C /* ServerList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8028108A5800E6892C /* ServerList.swift */; };
-		3F60BC9328108A5800E6892C /* AddNewServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8128108A5800E6892C /* AddNewServer.swift */; };
 		3F60BC9428108A5800E6892C /* ConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8228108A5800E6892C /* ConsoleView.swift */; };
 		3F60BC9528108A5800E6892C /* SSHDaemon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8328108A5800E6892C /* SSHDaemon.swift */; };
 		3F60BC9628108A5800E6892C /* ServerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F60BC8428108A5800E6892C /* ServerRow.swift */; };
@@ -51,7 +50,6 @@
 		3F60BC7E28108A5800E6892C /* LocalWebView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LocalWebView.swift; sourceTree = "<group>"; };
 		3F60BC7F28108A5800E6892C /* RootView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		3F60BC8028108A5800E6892C /* ServerList.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ServerList.swift; sourceTree = "<group>"; };
-		3F60BC8128108A5800E6892C /* AddNewServer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AddNewServer.swift; sourceTree = "<group>"; };
 		3F60BC8228108A5800E6892C /* ConsoleView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConsoleView.swift; sourceTree = "<group>"; };
 		3F60BC8328108A5800E6892C /* SSHDaemon.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SSHDaemon.swift; sourceTree = "<group>"; };
 		3F60BC8428108A5800E6892C /* ServerRow.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ServerRow.swift; sourceTree = "<group>"; };
@@ -92,7 +90,6 @@
 				3F60BC652810872700E6892C /* sshviewApp.swift */,
 				3F60BC7F28108A5800E6892C /* RootView.swift */,
 				3F60BC7528108A5800E6892C /* MainView.swift */,
-				3F60BC8128108A5800E6892C /* AddNewServer.swift */,
 				3F60BC7328108A5800E6892C /* EditServer.swift */,
 				3F60BC7428108A5800E6892C /* ServerItem.swift */,
 				3F60BC8028108A5800E6892C /* ServerList.swift */,
@@ -203,7 +200,6 @@
 				3F60BC9128108A5800E6892C /* RootView.swift in Sources */,
 				3F60BC8B28108A5800E6892C /* WebToolBarView.swift in Sources */,
 				3F60BC662810872700E6892C /* sshviewApp.swift in Sources */,
-				3F60BC9328108A5800E6892C /* AddNewServer.swift in Sources */,
 				3F60BC9628108A5800E6892C /* ServerRow.swift in Sources */,
 				3F60BC8928108A5800E6892C /* WebViewTest.swift in Sources */,
 				3F60BC8828108A5800E6892C /* UserIdList.swift in Sources */,

@@ -23,7 +23,7 @@ struct ConsoleView: View {
     func stdout(_ data: ArraySlice<UInt8>) {
         if data.isEmpty, !term.screenBuffer.isEmpty {
             DispatchQueue.main.async {
-                screenView = AnyView(term.renderScreen())
+                term.renderScreen()
             }
         }
         else {
@@ -54,7 +54,7 @@ struct ConsoleView: View {
                 Spacer()
             }
             GeometryReader { geometry in
-                screenView
+                term.screen.makeScreenView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .onAppear() {
                         print("geometry:\(geometry.size.width):\(geometry.size.height)")

@@ -15,10 +15,14 @@ struct MainView: View {
     var body: some View {
         NavigationView {
             List {
-                NavigationLink("Servers", destination: ServerList(isShowing: $isShowServer), isActive: $isShowServer)
-                NavigationLink("User ID", destination: UserIdList())
+                Section("Connect") {
+                    NavigationLink("Servers", destination: ServerList(isShowing: $isShowServer), isActive: $isShowServer)
+                }
+                Section("User") {
+                    NavigationLink("User ID", destination: UserIdList())
+                }
             }
-            .navigationTitle("SSH Client")
+            .navigationTitle("SSH View")
         }
         .navigationViewStyle(.stack)
     }

@@ -38,8 +38,10 @@ class connectionOperation: Operation {
             guard let parentSession = depend.session else {
                 return
             }
-            while !sshDaemon.checkSession(session: parentSession) {
+            var timeout = 15
+            while timeout > 0, !sshDaemon.checkSession(session: parentSession) {
                 Thread.sleep(forTimeInterval: 1.0)
+                timeout -= 1
             }
             guard sshDaemon.localPortFoward(session: parentSession, localPort: localPort, remoteHost: remoteHost, remotePort: UInt16(remotePort)) else {
                 return
@@ -54,6 +56,7 @@ class connectionOperation: Operation {
 
 struct ServerConnection: View {
     var serverTag: UUID
+    var tabTag: UUID
     @EnvironmentObject var serverProfile: ServerProfile
     @EnvironmentObject var userProfile: UserProfile
     @EnvironmentObject var tabData: TabDataList
@@ -75,6 +78,9 @@ struct ServerConnection: View {
     @State var regexString: String?
     @State var bufStdout: [UInt8] = []
     @State var forwardPort = 0
+    @State var fixedPort = 0
+    @State var browserURL = ""
+    @State var initTimeout = 15
     
     @State var queue = OperationQueue()
     @State var timer1: DispatchSourceTimer?
@@ -101,8 +107,10 @@ struct ServerConnection: View {
                     text += log + "\n"
                 }
             }, return_hashkey: { newkey in
-                if server.serverKeyHash.isEmpty, let idx = serverProfile.servers.firstIndex(of: server) {
-                    serverProfile.servers[idx].serverKeyHash = newkey
+                DispatchQueue.main.async {
+                    if server.serverKeyHash.isEmpty, let idx = serverProfile.servers.firstIndex(of: server) {
+                        serverProfile.servers[idx].serverKeyHash = newkey
+                    }
                 }
             })
             op.addDependency(proxyOperation)
@@ -116,8 +124,10 @@ struct ServerConnection: View {
                     text += log + "\n"
                 }
             }, return_hashkey: { newkey in
-                if server.serverKeyHash.isEmpty, let idx = serverProfile.servers.firstIndex(of: server) {
-                    serverProfile.servers[idx].serverKeyHash = newkey
+                DispatchQueue.main.async {
+                    if server.serverKeyHash.isEmpty, let idx = serverProfile.servers.firstIndex(of: server) {
+                        serverProfile.servers[idx].serverKeyHash = newkey
+                    }
                 }
             })
             return [op]
@@ -140,11 +150,16 @@ struct ServerConnection: View {
         queue.addOperations(operations, waitUntilFinished: true)
         
         session = operations.last?.session
+        guard session != nil else {
+            removeTag()
+            return
+        }
         session_list = operations.map({ $0.session })
         
         if let command = server.serverCommand {
             regexString = server.grepPortFoward
-            runCommand(command: Array(command.data(using: .utf8)!))
+            fixedPort = server.portFoward
+            runCommand(command: Array(command.data(using: .utf8)!) + [0])
         }
         else {
             allcateConsole()
@@ -163,23 +178,30 @@ struct ServerConnection: View {
         timer1 = DispatchSource.makeTimerSource(flags: [], queue: .global(qos: .background))
         timer1?.schedule(deadline: .now(), repeating: 1.0)
         timer1?.setEventHandler {
-            if !sshDaemon.checkSession(session: session) {
-                return
-            }
-            guard let stdInFcn = handler.stdInFcn else {
-                return
-            }
-            guard let stdOutFcn = handler.stdOutFcn else {
-                return
-            }
-            timer1?.cancel()
-            
-            sshDaemon.runCommand(session: session, comand: command, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: stdOutFcn)
+            if initTimeout > 0 {
+                if !sshDaemon.checkSession(session: session) {
+                    initTimeout -= 1
+                    return
+                }
+                guard let stdInFcn = handler.stdInFcn else {
+                    return
+                }
+                guard let stdOutFcn = handler.stdOutFcn else {
+                    return
+                }
 
-            var timeout = 20
-            while timeout > 0, !sshDaemon.checkCommand(session: session, commandIdx: 0) {
-                Thread.sleep(forTimeInterval: 1.0)
-                timeout -= 1
+                timer1?.cancel()
+                
+                sshDaemon.runCommand(session: session, comand: command, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: stdOutFcn)
+
+                var timeout = 20
+                while timeout > 0, !sshDaemon.checkCommand(session: session, commandIdx: 0) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    timeout -= 1
+                }
+            }
+            else {
+                timer1?.cancel()
             }
             timer2?.resume()
         }
@@ -195,6 +217,9 @@ struct ServerConnection: View {
                     let results  = regex.matches(in: output, range: NSMakeRange(0, output.count))
                     if results.count > 0, results[0].numberOfRanges > 1 {
                         forwardPort = Int(NSString(string: output).substring(with: results[0].range(at: 1))) ?? 0
+                        if results[0].numberOfRanges > 2 {
+                            browserURL = NSString(string: output).substring(with: results[0].range(at: 2))
+                        }
                     }
                 }
                 catch {
@@ -205,7 +230,12 @@ struct ServerConnection: View {
                     browser()
                 }
             }
-
+            if forwardPort == 0, fixedPort > 0 {
+                forwardPort = fixedPort
+                print(forwardPort)
+                browser()
+            }
+            
             if sshDaemon.checkCommand(session: session, commandIdx: 0) {
                 return
             }
@@ -233,23 +263,29 @@ struct ServerConnection: View {
         timer1 = DispatchSource.makeTimerSource(flags: [], queue: .global(qos: .background))
         timer1?.schedule(deadline: .now(), repeating: 1.0)
         timer1?.setEventHandler {
-            if !sshDaemon.checkSession(session: session) {
-                return
-            }
-            guard let stdInFcn = handler.stdInFcn else {
-                return
-            }
-            guard let stdOutFcn = handler.stdOutFcn else {
-                return
-            }
-            timer1?.cancel()
+            if initTimeout > 0 {
+                if !sshDaemon.checkSession(session: session) {
+                    initTimeout -= 1
+                    return
+                }
+                guard let stdInFcn = handler.stdInFcn else {
+                    return
+                }
+                guard let stdOutFcn = handler.stdOutFcn else {
+                    return
+                }
+                timer1?.cancel()
 
-            sshDaemon.createTerminal(session: session, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: nil)
+                sshDaemon.createTerminal(session: session, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: nil)
 
-            var timeout = 20
-            while timeout > 0, !sshDaemon.checkTerminal(session: session, terminalIdx: 0) {
-                Thread.sleep(forTimeInterval: 1.0)
-                timeout -= 1
+                var timeout = 20
+                while timeout > 0, !sshDaemon.checkTerminal(session: session, terminalIdx: 0) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    timeout -= 1
+                }
+            }
+            else {
+                timer1?.cancel()
             }
             timer2?.resume()
         }
@@ -282,27 +318,26 @@ struct ServerConnection: View {
     }
         
     func removeTag() {
-        guard let idx = tabData.tabData.firstIndex(where: { $0.id == tabData.selectedTab }) else {
-            return
-        }
-
-        let children = tabData.tabData[idx].childTag
-        for child in children {
-            guard let idx = tabData.tabData.firstIndex(where: { $0.id == child }) else {
-                continue
+        DispatchQueue.main.async {
+            guard let curTab = tabData.tabData[tabTag] else {
+                return
             }
-            tabData.tabData.remove(at: idx)
-        }
 
-        DispatchQueue.main.async {
-            tabData.tabData.remove(at: idx)
-        }
-
-        guard let id = tabData.tabData.first?.id else {
-            return
-        }
-        DispatchQueue.main.async {
-            tabData.selectedTab = id
+            let rmtag = [tabTag] + curTab.childTag
+            tabData.tabIdx = tabData.tabIdx.filter({ !rmtag.contains($0) })
+            for uuid in rmtag {
+                tabData.tabData.removeValue(forKey: uuid)
+            }
+            
+            if tabData.selectedTab != tabTag {
+                return
+            }
+            guard let id = tabData.tabIdx.first else {
+                return
+            }
+            DispatchQueue.main.async {
+                tabData.selectedTab = id
+            }
         }
     }
     
@@ -314,16 +349,19 @@ struct ServerConnection: View {
         let localPort = UInt16.random(in: 1024...UInt16.max)
         if sshDaemon.localPortFoward(session: session, localPort: localPort, remoteHost: "localhost", remotePort: UInt16(forwardPort)) {
             DispatchQueue.main.async {
-                guard let idx = tabData.tabData.firstIndex(where: { $0.id == tabData.selectedTab }) else {
+                guard var curTab = tabData.tabData[tabTag] else {
                     return
                 }
-
-                let newTab = TabDataItem(title: Text("Brower"), image: Image(systemName: "network"), tabView: AnyView(LocalWebView(url: "http://localhost:\(localPort)")))
-                tabData.tabData.append(newTab)
                 
-                tabData.tabData[idx].childTag.append(newTab.id)
+                let newTag = UUID()
+                let newTab = TabDataItem(id: newTag, title: Text("Brower"), image: Image(systemName: "network"), tabView: AnyView(LocalWebView(url: "http://localhost:\(localPort)/\(browserURL)")))
+                tabData.tabData[newTag] = newTab
+                tabData.tabIdx.append(newTag)
                 
-                tabData.selectedTab = newTab.id
+                curTab.childTag.append(newTag)
+                tabData.tabData[tabTag] = curTab
+                
+                tabData.selectedTab = newTag
             }
         }
     }
@@ -387,7 +425,10 @@ struct ServerConnection: View {
 }
 
 struct ServerConnection_Previews: PreviewProvider {
+    @State static var id = UUID()
+    @StateObject static var term = TerminalScreen()
+    
     static var previews: some View {
-        ServerConnection(serverTag: UUID())
+        ServerConnection(serverTag: UUID(), tabTag: id, term: term)
     }
 }

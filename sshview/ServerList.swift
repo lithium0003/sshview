@@ -11,8 +11,8 @@ struct ServerList: View {
     @EnvironmentObject var serverProfile: ServerProfile
     @EnvironmentObject var userProfile: UserProfile
     @EnvironmentObject var tabData: TabDataList
-    @State private var addMode = false
     @State private var editMode = false
+    @State private var duplicate = false
     @State private var serverIdx = 0
     @Binding var isShowing: Bool
 
@@ -25,19 +25,38 @@ struct ServerList: View {
                             isShowing = false
                         }
                         DispatchQueue.main.async {
-                            let newTab = TabDataItem(title: Text(serveritem.title), image: Image(systemName: "server.rack"), tabView: AnyView(ServerConnection(serverTag: serveritem.id)))
-                            tabData.tabData.append(newTab)
+                            let tag = UUID()
+                            let newTab = TabDataItem(id: tag, title: Text(serveritem.title), image: Image(systemName: "server.rack"), tabView: AnyView(ServerConnection(serverTag: serveritem.id, tabTag: tag)))
+                            tabData.tabData[tag] = newTab
+                            tabData.tabIdx.append(tag)
                             DispatchQueue.main.asyncAfter(deadline: .now()+0.5) {
-                                tabData.selectedTab = newTab.id
+                                tabData.selectedTab = tag
                             }
                         }
                     }) {
                         ServerRow(serverItem: serveritem)
                     }
+                    .contextMenu(menuItems: {
+                        Button(action: {
+                            serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
+                            editMode = true
+                            duplicate = false
+                        }, label: {
+                            Text("Edit")
+                        })
+                        Button(action: {
+                            serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
+                            editMode = true
+                            duplicate = true
+                        }, label: {
+                            Text("Duplicate")
+                        })
+                    })
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         Button("Edit") {
                             serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
                             editMode = true
+                            duplicate = false
                         }
                         .tint(.green)
                     }
@@ -54,9 +73,11 @@ struct ServerList: View {
             }
             .navigationBarTitle(Text("Server list"), displayMode: .inline)
             .navigationBarItems(trailing: Button(action: {
-                  // button activates link
-                   self.addMode = true
-                 } ) {
+                // button activates link
+                self.duplicate = false
+                self.serverIdx = -1
+                self.editMode = true
+            }) {
                  Image(systemName: "plus")
                      .resizable()
                      .padding(6)
@@ -67,9 +88,7 @@ struct ServerList: View {
             } )
             
             // invisible link inside NavigationView for add mode
-            NavigationLink(destination: AddNewServer(isShowCurrentView: $addMode),
-                isActive: $addMode) { EmptyView() }
-            NavigationLink(destination: EditServer(serverIdx: serverIdx, isShowCurrentView: $editMode),
+            NavigationLink(destination: EditServer(serverIdx: serverIdx, duplicate: duplicate, isShowCurrentView: $editMode),
                            isActive: $editMode) { EmptyView() }
         }
     }

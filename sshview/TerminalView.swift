@@ -174,20 +174,21 @@ class ScreenChar {
 }
 
 class CanvasView: UIView {
-    var parent: consoleScreen?
+    @ObservedObject var console: consoleScreen = consoleScreen()
     var timer: Timer?
     var blink = 0
-
+    
     var sWidth: CGFloat = 0
     var sHeight: CGFloat = 0
-    var panStart: CGPoint = .zero
     var scrollStart: Int = 0
+    var panStart: CGPoint = .zero
     var sizeStart: CGFloat = 16
-    
-    convenience init(parent: consoleScreen?) {
+
+    convenience init(console: consoleScreen!) {
         self.init(frame: .zero)
-        self.parent = parent
+        self.console = console
         self.timer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(onTimer), userInfo: nil, repeats: true)
+        backgroundColor = .clear
         
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(didPan)))
         addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(didPinch)))
@@ -201,6 +202,7 @@ class CanvasView: UIView {
       super.init(coder: aDecoder)
     }
     
+    
     @objc func onTimer() {
         setNeedsDisplay()
         blink += 1
@@ -210,7 +212,7 @@ class CanvasView: UIView {
     }
     
     @objc func didPan(_ gesture: UIPanGestureRecognizer) {
-        if gesture.numberOfTouches < 2, parent?.showingKeyboad ?? false {
+        if gesture.numberOfTouches < 2, console.showingKeyboad {
             if gesture.state == .ended {
                 let d = gesture.translation(in: self)
                 let length = sqrt(d.x * d.x + d.y * d.y)
@@ -222,53 +224,53 @@ class CanvasView: UIView {
                 print(count, length, th)
                 if th >= -CGFloat.pi / 4, th < CGFloat.pi / 4 {
                     // right
-                    if parent?.applicationCursor ?? false {
+                    if console.applicationCursor {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x4F, 0x43])
+                            console.stdinHandler?([0x1B, 0x4F, 0x43])
                         }
                     }
                     else {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x5B, 0x43])
+                            console.stdinHandler?([0x1B, 0x5B, 0x43])
                         }
                     }
                 }
                 else if th >= CGFloat.pi / 4, th < CGFloat.pi * 3 / 4 {
                     // down
-                    if parent?.applicationCursor ?? false {
+                    if console.applicationCursor {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x4F, 0x42])
+                            console.stdinHandler?([0x1B, 0x4F, 0x42])
                         }
                     }
                     else {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x5B, 0x42])
+                            console.stdinHandler?([0x1B, 0x5B, 0x42])
                         }
                     }
                 }
                 else if th >= -3 * CGFloat.pi / 4, th < -CGFloat.pi / 4 {
                     // up
-                    if parent?.applicationCursor ?? false {
+                    if console.applicationCursor {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x4F, 0x41])
+                            console.stdinHandler?([0x1B, 0x4F, 0x41])
                         }
                     }
                     else {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x5B, 0x41])
+                            console.stdinHandler?([0x1B, 0x5B, 0x41])
                         }
                     }
                 }
                 else {
                     // left
-                    if parent?.applicationCursor ?? false {
+                    if console.applicationCursor {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x4F, 0x44])
+                            console.stdinHandler?([0x1B, 0x4F, 0x44])
                         }
                     }
                     else {
                         for _ in 0..<count {
-                            parent?.stdinHandler?([0x1B, 0x5B, 0x44])
+                            console.stdinHandler?([0x1B, 0x5B, 0x44])
                         }
                     }
                 }
@@ -279,15 +281,15 @@ class CanvasView: UIView {
         switch gesture.state {
         case .began:
             panStart = gesture.location(in: self)
-            scrollStart = parent?.screenScroolStart ?? 0
+            scrollStart = console.screenScroolStart
         case .changed:
             let dy = gesture.location(in: self).y - panStart.y
-            parent?.screenScroolStart = scrollStart - Int(dy / sHeight)
+            console.screenScroolStart = scrollStart - Int(dy / sHeight)
             setNeedsDisplay()
         case .ended, .failed, .cancelled:
             let dy = gesture.location(in: self).y - panStart.y
             let vy = gesture.velocity(in: self).y
-            parent?.screenScroolStart = scrollStart - Int(dy / sHeight) - Int(vy / sHeight)
+            console.screenScroolStart = scrollStart - Int(dy / sHeight) - Int(vy / sHeight)
             setNeedsDisplay()
         case .possible:
             break
@@ -299,13 +301,13 @@ class CanvasView: UIView {
     @objc func didPinch(_ gesture: UIPinchGestureRecognizer) {
         switch gesture.state {
         case .began:
-            sizeStart = parent?.fontSize ?? 16
+            sizeStart = console.fontSize
         case .changed:
-            parent?.fontSize = max(9, sizeStart * gesture.scale)
+            console.fontSize = max(9, sizeStart * gesture.scale)
             setNeedsDisplay()
         case .ended, .failed, .cancelled:
-            parent?.fontSize = max(9, sizeStart * gesture.scale)
-            parent?.fontSizeChgDone = Date()
+            console.fontSize = max(9, sizeStart * gesture.scale)
+            console.fontSizeChgDone = Date()
             setNeedsDisplay()
         case .possible:
             break
@@ -313,16 +315,26 @@ class CanvasView: UIView {
             break
         }
     }
-    
+
     override func draw(_ rect: CGRect){
         super.draw(rect)
         
-        guard let parent = parent else {
-            return
+        if console.beep {
+            console.beep = false
+            
+            let flushView = UIView(frame: frame)
+            flushView.backgroundColor = .systemBackground
+            flushView.alpha = 0.5
+            addSubview(flushView)
+            UIView.animate(withDuration: 0.05, animations: {
+                flushView.backgroundColor = .label
+            }, completion: { (finished) in
+                flushView.removeFromSuperview()
+            })
         }
         
-        let normalFont = UIFont.monospacedSystemFont(ofSize: parent.fontSize, weight: .regular)
-        let boldFont = UIFont.monospacedSystemFont(ofSize: parent.fontSize, weight: .bold)
+        let normalFont = UIFont.monospacedSystemFont(ofSize: console.fontSize, weight: .regular)
+        let boldFont = UIFont.monospacedSystemFont(ofSize: console.fontSize, weight: .bold)
         let stringAttributes: [NSAttributedString.Key : Any] = [
             .font : normalFont
         ]
@@ -330,25 +342,25 @@ class CanvasView: UIView {
         sWidth = floor(s.width)
         sHeight = floor(s.height)
         
-        for y in 0..<parent.screenHeight {
-            let ys = y + parent.screenScroolStart
-            guard ys < parent.screenText.count else {
+        for y in 0..<console.screenHeight {
+            let ys = y + console.screenScroolStart
+            guard ys < console.screenText.count else {
                 continue
             }
             var xStart: CGFloat = 0
-            for x in 0..<parent.screenWidth {
-                guard x < parent.screenText[ys].count else {
+            for x in 0..<console.screenWidth {
+                guard x < console.screenText[ys].count else {
                     continue
                 }
                 if CGFloat(x) * sWidth < xStart {
                     continue
                 }
-                let isCurPos = parent.curX == x && parent.curY == y && parent.screenScroolStart == parent.screenStartLine && parent.showCursor
-                guard let c = parent.screenText[ys][x] else {
+                let isCurPos = console.curX == x && console.curY == y && console.screenScroolStart == console.screenStartLine && console.showCursor
+                guard let c = console.screenText[ys][x] else {
                     " ".draw(at: CGPoint(x: CGFloat(x) * sWidth, y: sHeight * CGFloat(y)), withAttributes: stringAttributes)
                     if isCurPos, blink == 0 {
                         UIColor.label.setFill()
-                        UIBezierPath(rect: CGRect(origin: CGPoint(x: CGFloat(x) * sWidth, y: sHeight * CGFloat(y+1) - parent.fontSize / 8), size: CGSize(width: sWidth, height: parent.fontSize / 8))).fill()
+                        UIBezierPath(rect: CGRect(origin: CGPoint(x: CGFloat(x) * sWidth, y: sHeight * CGFloat(y+1) - console.fontSize / 8), size: CGSize(width: sWidth, height: console.fontSize / 8))).fill()
                     }
 
                     xStart += sWidth
@@ -379,7 +391,7 @@ class CanvasView: UIView {
                 let s = NSAttributedString(string: c.text, attributes: attr).boundingRect(with: UIScreen.main.bounds.size, context: nil)
                 if isCurPos, blink == 0 {
                     UIColor.label.setFill()
-                    UIBezierPath(rect: CGRect(origin: CGPoint(x: CGFloat(x) * sWidth, y: sHeight * CGFloat(y+1) - parent.fontSize / 8), size: CGSize(width: s.width, height: parent.fontSize / 8))).fill()
+                    UIBezierPath(rect: CGRect(origin: CGPoint(x: CGFloat(x) * sWidth, y: sHeight * CGFloat(y+1) - console.fontSize / 8), size: CGSize(width: s.width, height: console.fontSize / 8))).fill()
                 }
                 xStart += floor(s.width)
             }
@@ -388,17 +400,18 @@ class CanvasView: UIView {
 }
 
 struct CanvasViewWrapper : UIViewRepresentable {
-    @ObservedObject var parent: consoleScreen
+    @ObservedObject var console: consoleScreen
 
     func makeUIView(context: Context) -> UIView {
-        return CanvasView(parent: parent)
+        let view = CanvasView(console: console)
+        console.onUpdate = {
+            view.setNeedsDisplay()
+        }
+        return view
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
-        uiView.backgroundColor = .clear
-        parent.onUpdate = {
-            uiView.setNeedsDisplay()
-        }
+        uiView.setNeedsDisplay()
     }
 }
 
@@ -414,7 +427,7 @@ class consoleScreen: ObservableObject {
     @Published var applicationCursor = false
     @Published var showCursor = true
     @Published var backendPasteMode = false
-
+    
     var screenStartLine: Int = 0
     var screenScroolStart: Int = 0 {
         didSet {
@@ -441,10 +454,13 @@ class consoleScreen: ObservableObject {
         screenScroolStart = 0
     }
     
-    func makeScreenView() -> some View {
+    func drawView() {
         screenScroolStart = screenStartLine
         onUpdate?()
-        return CanvasViewWrapper(parent: self)
+    }
+    
+    func makeScreenView() -> some View {
+        CanvasViewWrapper(console: self)
     }
     
     func setSize(size: CGSize) -> (width: Int, height: Int) {
@@ -803,7 +819,7 @@ class TerminalScreen: ObservableObject {
         4: (0x80, 0x8F),
     ]
     
-    func renderScreen() -> some View {
+    func renderScreen() {
         var c_size = 0
         var c_accept = acceptRanges[0]!
         var c_i = 0
@@ -1419,8 +1435,7 @@ class TerminalScreen: ObservableObject {
             }
         }
         screenBuffer = []
-        return screen.makeScreenView()
+        screen.drawView()
     }
-
 }
 

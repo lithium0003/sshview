@@ -17,6 +17,7 @@ struct ServerItem: Identifiable, Equatable, Codable {
     var serverKeyHash: [UInt8] = []
     var serverCommand: String?
     var grepPortFoward: String?
+    var portFoward: Int = 0
 }
 
 class ServerProfile: ObservableObject {

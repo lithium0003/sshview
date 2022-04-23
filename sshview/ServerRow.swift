@@ -14,6 +14,7 @@ struct ServerRow: View {
         HStack {
             Text(serverItem.title)
             Spacer()
+            Text("\(serverItem.remoteHost):\(serverItem.remotePort)")
         }
     }
 }

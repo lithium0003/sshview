@@ -66,7 +66,7 @@ struct UserIdDetail: View {
 
         return sshkeystr + " " + String(cString: pubkey_b64)
     }
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading) {

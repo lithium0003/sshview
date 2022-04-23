@@ -496,6 +496,7 @@ class CommandSession {
             }
             else {
                 ssh_channel_request_send_signal(channel, "INT")
+                ssh_channel_request_send_signal(channel, "INT")
                 ssh_channel_send_eof(channel)
             }
         }

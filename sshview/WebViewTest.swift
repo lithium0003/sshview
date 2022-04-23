@@ -47,12 +47,13 @@ struct WebViewTest: UIViewRepresentable {
     func makeCoordinator() -> WebViewTest.Coordinator {
         let cood = Coordinator(parent: self)
         webView.navigationDelegate = cood
+        webView.uiDelegate = cood
         return cood
     }
 }
 
 extension WebViewTest {
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let parent: WebViewTest
 
         init(parent: WebViewTest) {
@@ -63,6 +64,13 @@ extension WebViewTest {
             parent.canGoBack = webView.canGoBack
             parent.canGoForward = webView.canGoForward
             parent.action = .none
-        }        
+        }
+        
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
+            }
+            return nil
+        }
     }
 }
