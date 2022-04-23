@@ -67,8 +67,11 @@ extension WebViewTest {
         }
         
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if navigationAction.targetFrame == nil {
-                webView.load(navigationAction.request)
+            if navigationAction.targetFrame == nil || navigationAction.targetFrame?.isMainFrame == false {
+                if let url = navigationAction.request.url?.absoluteString, !url.isEmpty {
+                    print(url)
+                    webView.load(navigationAction.request)
+                }
             }
             return nil
         }

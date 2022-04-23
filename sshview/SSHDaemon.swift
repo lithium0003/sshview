@@ -750,10 +750,11 @@ class SSHDaemon: ObservableObject {
     }
     
     func disconnect(session: ssh_session) {
-        for i in (0..<connections.count).reversed() {
+        for i in 0..<connections.count {
             if connections[i].session == session {
                 connections[i].disconnect()
                 connections.remove(at: i)
+                break
             }
         }
     }
