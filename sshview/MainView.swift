@@ -21,6 +21,9 @@ struct MainView: View {
                 Section("User") {
                     NavigationLink("User ID", destination: UserIdList())
                 }
+                Section("Help") {
+                    Link("Online Help", destination: URL(string: "https://lithium03.info/ios/sshview.en.html#help")!)
+                }
             }
             .navigationTitle("SSH View")
         }
