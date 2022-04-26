@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import GameController
 
 struct ConsoleView: View {
     @Binding var isActive: Bool
@@ -16,9 +17,6 @@ struct ConsoleView: View {
 
     @State var textInputMode = false
     @State var textInput = ""
-    
-    @State var screenView: AnyView = AnyView(EmptyView())
-    
     
     func stdout(_ data: ArraySlice<UInt8>) {
         if data.isEmpty, !term.screenBuffer.isEmpty {

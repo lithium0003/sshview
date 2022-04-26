@@ -7,9 +7,11 @@
 
 import Foundation
 import SwiftUI
+import GameController
 
 protocol InvisibleTextViewDelegate {
     func insertText(text: String)
+    func insertCode(code: [UInt8])
     func deleteText()
     func textInputMode()
 }
@@ -24,6 +26,47 @@ class InvisibleTextView: UIView, UIKeyInput {
     
     var hasText: Bool { true }
 
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        for press in presses {
+            guard let key = press.key else { continue }
+            
+            if key.modifierFlags.contains([.control]) {
+                isCtrl = true
+                ctrlButton.tintColor = .systemRed
+            }
+
+            if isCtrl {
+                delegate?.insertText(text: key.characters)
+                continue
+            }
+
+            switch key.keyCode {
+            case .keyboardUpArrow:
+                delegate?.insertCode(code: [0x1B, 0x5B, 0x41])
+            case .keyboardDownArrow:
+                delegate?.insertCode(code: [0x1B, 0x5B, 0x42])
+            case .keyboardRightArrow:
+                delegate?.insertCode(code: [0x1B, 0x5B, 0x43])
+            case .keyboardLeftArrow:
+                delegate?.insertCode(code: [0x1B, 0x5B, 0x44])
+            default:
+                super.pressesBegan(presses, with: event)
+            }
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        for press in presses {
+            guard let key = press.key else { continue }
+            
+            if key.modifierFlags.contains([.control]) {
+                isCtrl = false
+                ctrlButton.tintColor = nil
+            }
+        }
+        super.pressesEnded(presses, with: event)
+    }
+    
     func insertText(_ text: String) {
         if isCtrl {
             isCtrl = false
@@ -40,7 +83,7 @@ class InvisibleTextView: UIView, UIKeyInput {
             }
             print("^"+text)
             let code = value & 0x1F
-            delegate?.insertText(text: String(bytes: [code], encoding: .utf8)!)
+            delegate?.insertCode(code: [code])
         }
         else {
             print(text)
@@ -76,7 +119,7 @@ class InvisibleTextView: UIView, UIKeyInput {
     
     @objc func barButtonTapped(_ sender: UIBarButtonItem) {
         if sender.title == "esc" {
-            delegate?.insertText(text: String(bytes: [27], encoding: .utf8)!)
+            delegate?.insertCode(code: [27])
         }
         else if sender.title == "Ctrl" {
             isCtrl.toggle()
@@ -101,6 +144,10 @@ struct InvisibleTextViewWrapper: UIViewRepresentable {
     @ObservedObject var console: consoleScreen
 
     class Coordinator: InvisibleTextViewDelegate {
+        func insertCode(code: [UInt8]) {
+            parent.console.stdinHandler?(code)
+        }
+        
         func textInputMode() {
             parent.textInputMode.toggle()
         }
@@ -190,7 +237,9 @@ class CanvasView: UIView {
         self.timer = Timer.scheduledTimer(timeInterval: 1.0, target: self, selector: #selector(onTimer), userInfo: nil, repeats: true)
         backgroundColor = .clear
         
-        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(didPan)))
+        let panGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(didPan))
+        panGestureRecognizer.allowedScrollTypesMask = [.continuous, .discrete]
+        addGestureRecognizer(panGestureRecognizer)
         addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(didPinch)))
     }
     
@@ -212,7 +261,8 @@ class CanvasView: UIView {
     }
     
     @objc func didPan(_ gesture: UIPanGestureRecognizer) {
-        if gesture.numberOfTouches < 2, console.showingKeyboad {
+        let isKeyboardConnected = GCKeyboard.coalesced != nil
+        if !isKeyboardConnected, gesture.numberOfTouches < 2, console.showingKeyboad {
             if gesture.state == .ended {
                 let d = gesture.translation(in: self)
                 let length = sqrt(d.x * d.x + d.y * d.y)
@@ -442,6 +492,7 @@ class consoleScreen: ObservableObject {
     var curX = 0
     var curY = 0
     var beep = false
+    var lastOutchar = ""
     
     var screenText: [[ScreenChar?]] = [[ScreenChar?]](repeating: [ScreenChar?](repeating: nil, count: 80), count: 24)
     var onUpdate: (()->Void)?
@@ -767,6 +818,7 @@ class consoleScreen: ObservableObject {
         justifyCur()
         
         screenText[screenStartLine+curY][curX] = value
+        lastOutchar = value?.text ?? ""
     }
 }
 
@@ -903,6 +955,46 @@ class TerminalScreen: ObservableObject {
                 }
                 escSequence.append(c)
                 
+                
+                if escSequence[1] == 0x44 {
+                    // IND
+                    // ESC D
+                    
+                    // Moves the cursor down one line in the same column.
+                    escSequence = []
+                    screen.CurDOWN()
+                    continue
+                }
+                if escSequence[1] == 0x45 {
+                    // RI
+                    // ESC M
+                    
+                    escSequence = []
+                    
+                    // Moves the cursor to the first position on the next line.
+                    let y = screen.curY
+                    screen.setCurPos(x: 0, y: y+1)
+                    continue
+                }
+                if escSequence[1] == 0x48 {
+                    // HTS
+                    // ESC H
+                    
+                    escSequence = []
+                    // no implements
+                    continue
+                }
+                if escSequence[1] == 0x4D {
+                    // RI
+                    // ESC M
+                    
+                    escSequence = []
+                    
+                    // Moves the cursor up one line in the same column.
+                    screen.CurUP()
+                    continue
+                }
+
                 if escSequence[1] == 0x3D {
                     // DECKPAM
                     // ESC =
@@ -1172,6 +1264,88 @@ class TerminalScreen: ObservableObject {
                         let code = Int(Pt) ?? 1
                         screen.eraseRight(c: code)
                     }
+                    else if command == "Z" {
+                        // CBT
+                        // CSI Ps Z
+
+                        // Moves cursor to the Ps tabs backward.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let y = screen.curY
+                        let tx = screen.curX / 8 - code + 1
+                        if tx < 0 {
+                            screen.setCurPos(x: 0, y: y)
+                        }
+                        else {
+                            screen.setCurPos(x: tx * 8, y: y)
+                        }
+                    }
+                    else if command == "`" {
+                        // HPA
+                        // CSI Ps `
+
+                        // Moves cursor to the Ps-th column of the active line.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let y = screen.curY
+                        screen.setCurPos(x: code - 1, y: y)
+                    }
+                    else if command == "a" {
+                        // HPR
+                        // CSI Ps a
+
+                        // Moves cursor to the right Ps columns.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let x = screen.curX
+                        let y = screen.curY
+                        screen.setCurPos(x: x + code, y: y)
+                    }
+                    else if command == "b" {
+                        // REP
+                        // CSI Ps b
+
+                        // Repeat the last output character Ps times.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        for _ in 0..<code {
+                            curChar = ScreenChar(other: curChar)
+                            screen.writeCur(ScreenChar(other: curChar, text: screen.lastOutchar))
+                            screen.incCur()
+                        }
+                    }
+                    else if command == "d" {
+                        // VPA
+                        // CSI Ps d
+
+                        // Move to the corresponding vertical position (line Ps) of the current column.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let x = screen.curX
+                        screen.setCurPos(x: x, y: code - 1)
+                    }
+                    else if command == "e" {
+                        // VPR
+                        // CSI Ps e
+
+                        // Moves cursor down Ps lines in the same column.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let x = screen.curX
+                        let y = screen.curY
+                        screen.setCurPos(x: x, y: y + code)
+                    }
+                    else if command == "f" {
+                        // HVP
+                        // CSI Ps1 ; Ps2 f
+
+                        // Moves cursor to the Ps1-th line and to the Ps2-th column.
+                        // The default value of Ps1 and Ps2 is 1.
+                        let code = Pt.split(separator: ";")
+                        let Ps1 = code.count > 0 ? (Int(code[0]) ?? 1) : 1
+                        let Ps2 = code.count > 1 ? (Int(code[1]) ?? 1) : 1
+                        screen.setCurPos(x: Ps1 - 1, y: Ps2 - 1)
+                    }
                     else if Pt.prefix(1) == "?", command == "h" {
                         // DECSET
                         let code = Int(Pt.dropFirst()) ?? -1
@@ -1194,6 +1368,28 @@ class TerminalScreen: ObservableObject {
                         default:
                             break
                         }
+                    }
+                    else if command == "j" {
+                        // HPB
+                        // CSI Ps j
+
+                        // Moves cursor to the left Ps columns.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let x = screen.curX
+                        let y = screen.curY
+                        screen.setCurPos(x: x - code, y: y)
+                    }
+                    else if command == "k" {
+                        // VPB
+                        // CSI Ps k
+
+                        // Moves cursor up Ps lines in the same column.
+                        // The default value of Ps is 1.
+                        let code = Int(Pt) ?? 1
+                        let x = screen.curX
+                        let y = screen.curY
+                        screen.setCurPos(x: x, y: y - code)
                     }
                     else if Pt.prefix(1) == "?", command == "l" {
                         // DECRST
@@ -1224,7 +1420,92 @@ class TerminalScreen: ObservableObject {
                         if code.isEmpty {
                             code = ["0"]
                         }
+                        var lastcode: [Int] = []
                         for c in code {
+                            if lastcode.count == 1 {
+                                lastcode.append(Int(c) ?? -1)
+                                continue
+                            }
+                            if lastcode.count == 2, lastcode[1] == 5 {
+                                let color: UIColor
+                                let i = Int(c) ?? 0
+                                switch i {
+                                case 0:
+                                    color = .black
+                                case 1:
+                                    color = UIColor(red: 0.75, green: 0.0, blue: 0.0, alpha: 1.0)
+                                case 2:
+                                    color = UIColor(red: 0.0, green: 0.75, blue: 0.0, alpha: 1.0)
+                                case 3:
+                                    color = UIColor(red: 0.75, green: 0.75, blue: 0.0, alpha: 1.0)
+                                case 4:
+                                    color = UIColor(red: 0.0, green: 0.0, blue: 0.75, alpha: 1.0)
+                                case 5:
+                                    color = UIColor(red: 0.75, green: 0.0, blue: 0.75, alpha: 1.0)
+                                case 6:
+                                    color = UIColor(red: 0.0, green: 0.75, blue: 0.75, alpha: 1.0)
+                                case 7:
+                                    color = UIColor(red: 0.75, green: 0.75, blue: 0.75, alpha: 1.0)
+                                case 8:
+                                    color = UIColor(red: 0.25, green: 0.25, blue: 0.25, alpha: 1.0)
+                                case 9:
+                                    color = .red
+                                case 10:
+                                    color = .green
+                                case 11:
+                                    color = .yellow
+                                case 12:
+                                    color = .blue
+                                case 13:
+                                    color = .magenta
+                                case 14:
+                                    color = .cyan
+                                case 15:
+                                    color = .white
+                                case 16...231:
+                                    let r = (i - 16) / 36
+                                    let g = ((i - 16) / 6) % 6
+                                    let b = (i - 16) % 6
+                                    let v = [0, 95, 135, 175, 215, 255]
+                                    color = UIColor(red: CGFloat(v[r]) / 255.0, green: CGFloat(v[g]) / 255.0, blue: CGFloat(v[b]) / 255.0, alpha: 1.0)
+                                case 232...255:
+                                    let v = [8, 18, 28, 38, 48, 58, 68, 78, 88, 98, 108, 118, 128, 138, 148, 158, 168, 178, 188, 198, 208, 218, 228, 238]
+                                    color = UIColor(white: CGFloat(v[i - 232]), alpha: 1.0)
+                                default:
+                                    color = .label
+                                }
+                                
+                                if lastcode[0] == 38 {
+                                    curChar.foregroundColor = color
+                                }
+                                else if lastcode[0] == 48 {
+                                    curChar.backgroundColor = color
+                                }
+                                lastcode = []
+                                continue
+                            }
+                            if lastcode.count >= 2, lastcode[1] == 2 {
+                                if lastcode.count < 5 {
+                                    lastcode.append(Int(c) ?? -1)
+                                    continue
+                                }
+                                
+                                let r = lastcode[2]
+                                let g = lastcode[3]
+                                let b = lastcode[4]
+                                
+                                let color = UIColor(red: CGFloat(r) / 255.0, green: CGFloat(g) / 255.0, blue: CGFloat(b) / 255.0, alpha: 1.0)
+                                
+                                if lastcode[0] == 38 {
+                                    curChar.foregroundColor = color
+                                }
+                                else if lastcode[0] == 48 {
+                                    curChar.backgroundColor = color
+                                }
+                                lastcode = []
+                                continue
+                            }
+                            
                             switch Int(c) {
                             case 0:
                                 // Normal
@@ -1277,6 +1558,8 @@ class TerminalScreen: ObservableObject {
                             case 37:
                                 // Set foreground color to White. (Color No. 7)
                                 curChar.foregroundColor = .white
+                            case 38:
+                                lastcode = [38]
                             case 39:
                                 // Set foreground color to default.
                                 curChar.foregroundColor = .label
@@ -1304,6 +1587,8 @@ class TerminalScreen: ObservableObject {
                             case 47:
                                 // Set background color to White. (Color No. 7)
                                 curChar.backgroundColor = .white
+                            case 48:
+                                lastcode = [48]
                             case 49:
                                 // Set background color to default.
                                 curChar.backgroundColor = .systemBackground
