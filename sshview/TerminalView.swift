@@ -14,6 +14,7 @@ protocol InvisibleTextViewDelegate {
     func insertCode(code: [UInt8])
     func deleteText()
     func textInputMode()
+    func isApplicationCursor() -> Bool
 }
 
 class InvisibleTextView: UIView, UIKeyInput {
@@ -41,14 +42,36 @@ class InvisibleTextView: UIView, UIKeyInput {
             }
 
             switch key.keyCode {
+            case .keyboardEscape:
+                delegate?.insertCode(code: [0x1B])
             case .keyboardUpArrow:
-                delegate?.insertCode(code: [0x1B, 0x5B, 0x41])
+                if delegate?.isApplicationCursor() ?? false {
+                    delegate?.insertCode(code: [0x1B, 0x4F, 0x41])
+                }
+                else {
+                    delegate?.insertCode(code: [0x1B, 0x5B, 0x41])
+                }
             case .keyboardDownArrow:
-                delegate?.insertCode(code: [0x1B, 0x5B, 0x42])
+                if delegate?.isApplicationCursor() ?? false {
+                    delegate?.insertCode(code: [0x1B, 0x4F, 0x42])
+                }
+                else {
+                    delegate?.insertCode(code: [0x1B, 0x5B, 0x42])
+                }
             case .keyboardRightArrow:
-                delegate?.insertCode(code: [0x1B, 0x5B, 0x43])
+                if delegate?.isApplicationCursor() ?? false {
+                    delegate?.insertCode(code: [0x1B, 0x4F, 0x43])
+                }
+                else {
+                    delegate?.insertCode(code: [0x1B, 0x5B, 0x43])
+                }
             case .keyboardLeftArrow:
-                delegate?.insertCode(code: [0x1B, 0x5B, 0x44])
+                if delegate?.isApplicationCursor() ?? false {
+                    delegate?.insertCode(code: [0x1B, 0x4F, 0x44])
+                }
+                else {
+                    delegate?.insertCode(code: [0x1B, 0x5B, 0x44])
+                }
             default:
                 super.pressesBegan(presses, with: event)
             }
@@ -144,6 +167,10 @@ struct InvisibleTextViewWrapper: UIViewRepresentable {
     @ObservedObject var console: consoleScreen
 
     class Coordinator: InvisibleTextViewDelegate {
+        func isApplicationCursor() -> Bool {
+            parent.console.applicationCursor
+        }
+        
         func insertCode(code: [UInt8]) {
             parent.console.stdinHandler?(code)
         }
@@ -830,6 +857,11 @@ class TerminalScreen: ObservableObject {
     
     @Published var expandLF: Bool = false
     
+    var saved_curX = 0
+    var saved_curY = 0
+    var saved_Char = ScreenChar()
+    var curChar = ScreenChar()
+
     enum codetype: Int {
         case xx = 0xF1 // invalid: size 1
         case ac = 0xF0 // ASCII: size 1
@@ -878,7 +910,6 @@ class TerminalScreen: ObservableObject {
         var escSequence: [UInt8] = []
         var tmpBuf: [UInt8] = []
         
-        var curChar = ScreenChar()
         print(screenBuffer)
         for c in screenBuffer {
             if escSequence.count > 0  {
@@ -956,6 +987,41 @@ class TerminalScreen: ObservableObject {
                 escSequence.append(c)
                 
                 
+                if escSequence[1] == 0x36 {
+                    // DECBI
+                    // ESC 6
+                    
+                    escSequence = []
+                    // no implements
+                    continue
+                }
+                if escSequence[1] == 0x37 {
+                    // DECSC
+                    // ESC 7
+                    
+                    escSequence = []
+                    saved_curX = screen.curX
+                    saved_curY = screen.curY
+                    saved_Char = curChar
+                    continue
+                }
+                if escSequence[1] == 0x38 {
+                    // DECRC
+                    // ESC 8
+                    
+                    escSequence = []
+                    screen.setCurPos(x: saved_curX, y: saved_curY)
+                    curChar = saved_Char
+                    continue
+                }
+                if escSequence[1] == 0x39 {
+                    // DECFI
+                    // ESC 9
+                    
+                    escSequence = []
+                    // no implements
+                    continue
+                }
                 if escSequence[1] == 0x44 {
                     // IND
                     // ESC D
@@ -1344,7 +1410,7 @@ class TerminalScreen: ObservableObject {
                         let code = Pt.split(separator: ";")
                         let Ps1 = code.count > 0 ? (Int(code[0]) ?? 1) : 1
                         let Ps2 = code.count > 1 ? (Int(code[1]) ?? 1) : 1
-                        screen.setCurPos(x: Ps1 - 1, y: Ps2 - 1)
+                        screen.setCurPos(x: Ps2 - 1, y: Ps1 - 1)
                     }
                     else if Pt.prefix(1) == "?", command == "h" {
                         // DECSET
@@ -1539,22 +1605,22 @@ class TerminalScreen: ObservableObject {
                                 curChar.foregroundColor = .black
                             case 31:
                                 // Set foreground color to Red. (Color No. 1)
-                                curChar.foregroundColor = .red
+                                curChar.foregroundColor = .systemRed
                             case 32:
                                 // Set foreground color to Green. (Color No. 2)
-                                curChar.foregroundColor = .green
+                                curChar.foregroundColor = .systemGreen
                             case 33:
                                 // Set foreground color to Yellow. (Color No. 3)
-                                curChar.foregroundColor = .yellow
+                                curChar.foregroundColor = .systemYellow
                             case 34:
                                 // Set foreground color to Blue. (Color No. 4)
-                                curChar.foregroundColor = .blue
+                                curChar.foregroundColor = .systemBlue
                             case 35:
                                 // Set foreground color to Magenta. (Color No. 5)
                                 curChar.foregroundColor = .magenta
                             case 36:
                                 // Set foreground color to Cyan. (Color No. 6)
-                                curChar.foregroundColor = .cyan
+                                curChar.foregroundColor = .systemCyan
                             case 37:
                                 // Set foreground color to White. (Color No. 7)
                                 curChar.foregroundColor = .white
@@ -1568,22 +1634,22 @@ class TerminalScreen: ObservableObject {
                                 curChar.backgroundColor = .black
                             case 41:
                                 // Set background color to Red. (Color No. 1)
-                                curChar.backgroundColor = .red
+                                curChar.backgroundColor = .systemRed
                             case 42:
                                 // Set background color to Green. (Color No. 2)
-                                curChar.backgroundColor = .green
+                                curChar.backgroundColor = .systemGreen
                             case 43:
                                 // Set background color to Yellow. (Color No. 3)
-                                curChar.backgroundColor = .yellow
+                                curChar.backgroundColor = .systemYellow
                             case 44:
                                 // Set background color to Blue. (Color No. 4)
-                                curChar.backgroundColor = .blue
+                                curChar.backgroundColor = .systemBlue
                             case 45:
                                 // Set background color to Magenta. (Color No. 5)
                                 curChar.backgroundColor = .magenta
                             case 46:
                                 // Set background color to Cyan. (Color No. 6)
-                                curChar.backgroundColor = .cyan
+                                curChar.backgroundColor = .systemCyan
                             case 47:
                                 // Set background color to White. (Color No. 7)
                                 curChar.backgroundColor = .white
