@@ -521,6 +521,9 @@ class consoleScreen: ObservableObject {
     var beep = false
     var lastOutchar = ""
     
+    var topMargin = 0
+    var bottomMargin = 0
+
     var screenText: [[ScreenChar?]] = [[ScreenChar?]](repeating: [ScreenChar?](repeating: nil, count: 80), count: 24)
     var onUpdate: (()->Void)?
     
@@ -701,20 +704,27 @@ class consoleScreen: ObservableObject {
     }
 
     func deleteLine(c: Int) {
-        for _ in 0..<c {
-            if curY + screenStartLine < screenText.count {
-                screenText.remove(at: curY + screenStartLine)
+        if bottomMargin > 0 {
+            for _ in 0..<c {
+                if curY + screenStartLine < screenText.count {
+                    screenText.remove(at: curY + screenStartLine)
+                }
+            }
+            for _ in 0..<c {
+                screenText.insert([ScreenChar?](repeating: nil, count: screenWidth), at: screenStartLine + bottomMargin)
             }
         }
+        else {
 
-        if screenStartLine + screenHeight < screenText.count {
-            return
-        }
+            if screenStartLine + screenHeight < screenText.count {
+                return
+            }
 
-        let addcount = screenStartLine + screenHeight - screenText.count
-        if addcount > 0 {
-            for _ in 0..<addcount {
-                screenText.append([ScreenChar?](repeating: nil, count: screenWidth))
+            let addcount = screenStartLine + screenHeight - screenText.count
+            if addcount > 0 {
+                for _ in 0..<addcount {
+                    screenText.append([ScreenChar?](repeating: nil, count: screenWidth))
+                }
             }
         }
     }
@@ -763,14 +773,32 @@ class consoleScreen: ObservableObject {
         }
     }
 
-    func LF() {
+    func scrollLine() {
         curY += 1
-        if curY < screenHeight {
-            return
+        if bottomMargin > 0 {
+            if curY < bottomMargin {
+                return
+            }
         }
-
+        else {
+            if curY < screenHeight {
+                return
+            }
+        }
+        
         curY -= 1
+        if topMargin > 0 {
+            let scrolltop = screenText[screenStartLine + topMargin]
+            screenText.remove(at: screenStartLine + topMargin)
+            screenText.insert(scrolltop, at: screenStartLine)
+        }
+        
         screenStartLine += 1
+        if bottomMargin > 0 {
+            let linen = screenStartLine + bottomMargin
+            screenText.insert([ScreenChar?](repeating: nil, count: screenWidth), at: linen)
+        }
+        
         if screenStartLine + screenHeight < screenText.count {
             return
         }
@@ -779,6 +807,10 @@ class consoleScreen: ObservableObject {
         for _ in 0..<addcount {
             screenText.append([ScreenChar?](repeating: nil, count: screenWidth))
         }
+    }
+    
+    func LF() {
+        scrollLine()
     }
     
     func CR() {
@@ -822,22 +854,18 @@ class consoleScreen: ObservableObject {
         if curX < screenWidth {
             return
         }
-
-        curY += 1
         curX = 0
-        if curY < screenHeight {
-            return
+        scrollLine()
+    }
+    
+    func setMargins(top: Int, bottom: Int) {
+        topMargin = top - 1
+        if topMargin < 0 {
+            topMargin = 0
         }
-        
-        curY -= 1
-        screenStartLine += 1
-        if screenStartLine + screenHeight < screenText.count {
-            return
-        }
-
-        let addcount = screenStartLine + screenHeight - screenText.count
-        for _ in 0..<addcount {
-            screenText.append([ScreenChar?](repeating: nil, count: screenWidth))
+        bottomMargin = bottom - 1
+        if bottomMargin < 0 || bottomMargin >= screenHeight {
+            bottomMargin = 0
         }
     }
     
@@ -859,7 +887,6 @@ class TerminalScreen: ObservableObject {
     
     var saved_curX = 0
     var saved_curY = 0
-    var saved_Char = ScreenChar()
     var curChar = ScreenChar()
 
     enum codetype: Int {
@@ -1002,7 +1029,6 @@ class TerminalScreen: ObservableObject {
                     escSequence = []
                     saved_curX = screen.curX
                     saved_curY = screen.curY
-                    saved_Char = curChar
                     continue
                 }
                 if escSequence[1] == 0x38 {
@@ -1011,7 +1037,6 @@ class TerminalScreen: ObservableObject {
                     
                     escSequence = []
                     screen.setCurPos(x: saved_curX, y: saved_curY)
-                    curChar = saved_Char
                     continue
                 }
                 if escSequence[1] == 0x39 {
@@ -1426,6 +1451,12 @@ class TerminalScreen: ObservableObject {
                             // Show cursor.
                             
                             screen.showCursor = true
+                        case 1049:
+                            // XT_EXTSCRN
+                            // Save cursor position, switch to alternate screen buffer, and clear screen.
+                            
+                            screen.topMargin = 0
+                            screen.bottomMargin = 0
                         case 2004:
                             // RL_BRACKET
                             // Enables Bracketed paste mode
@@ -1471,6 +1502,12 @@ class TerminalScreen: ObservableObject {
                             // Hide cursor.
                             
                             screen.showCursor = false
+                        case 1049:
+                            // XT_EXTSCRN
+                            // Clear screen, switch to normal screen buffer, and restore cursor position.
+                            
+                            screen.topMargin = 0
+                            screen.bottomMargin = 0
                         case 2004:
                             // RL_BRACKET
                             // Disables Bracketed paste mode
@@ -1663,7 +1700,43 @@ class TerminalScreen: ObservableObject {
                             }
                         }
                     }
-                    
+                    else if command == "n" {
+                        // DSR
+                        // CSI Ps n
+                        
+                        // Reports device status.
+                        // Ps = 5      Requests the terminal's operation status report.
+                        //             Always returns "CSI 0 n" (Terminal ready).
+                        //  Response: CSI s n
+                        //            s = 0    Terminal ready.
+                        //    = 6      Requests cursor position report. (CPR)
+                        //  Response: CSI r ; c R
+                        //            r    Line number.
+                        //            c    Column number.
+
+                        let Ps = Int(Pt) ?? 0
+                        if Ps == 5 {
+                            screen.stdinHandler?([0x1B, 0x5B, 0x30, 0x6e])
+                        }
+                        else if Ps == 6 {
+                            let str = "\(screen.curY+1);\(screen.curX+1)R"
+                            screen.stdinHandler?([0x1B, 0x5B] + Array(str.data(using: .utf8)!))
+                        }
+                    }
+                    else if command == "r" {
+                        // DECSTBM
+                        // CSI Ps1 ; Ps2 r
+
+                        // Ps1    Line number for the top margin.
+                        //        The default value is 1.
+                        // Ps2    Line number for the bottom margin.
+                        //        The default value is current number of lines per screen.
+                        let code = Pt.split(separator: ";")
+                        let Ps1 = code.count > 0 ? (Int(code[0]) ?? 1) : 1
+                        let Ps2 = code.count > 1 ? (Int(code[1]) ?? screen.screenHeight + 1) : screen.screenHeight + 1
+                        screen.setMargins(top: Ps1, bottom: Ps2)
+                    }
+
                     escSequence = []
                     continue
                 }
