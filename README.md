@@ -18,6 +18,13 @@ This app depends on OpenSSL library https://github.com/openssl/openssl and libss
 libssh is LGPL 2.1, openssl is Apache License 2.0,
 This app build with static link, so the app is LGPL 2.1
 
+## Movie
+<p float="left">
+<img src="https://lithium03.info/ios/sshview/movie1.gif" width="320px">
+<img src="https://lithium03.info/ios/sshview/movie2.gif" width="320px">
+<img src="https://lithium03.info/ios/sshview/movie3.gif" width="320px">
+</p>
+
 ## Screenshots
 
 <p float="left">
@@ -90,7 +97,7 @@ Alredy running on the server and open the port, you can keep remote command fiel
 Some command is need to run on connection, you enter the commands. 
 
 
-## build
+## Build
 
 First, build library.
 
