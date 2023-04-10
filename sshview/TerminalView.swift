@@ -566,9 +566,6 @@ class consoleScreen: ObservableObject {
                 screenText.append([ScreenChar?](repeating: nil, count: screenWidth))
             }
         }
-        for i in (screenStartLine + screenHeight)..<screenText.count {
-            screenText[i] = [ScreenChar?](repeating: nil, count: newSize.width)
-        }
 
         if curX >= screenWidth {
             curX = screenWidth - 1
