@@ -73,7 +73,7 @@ actor LocalPortForward {
     
     var connSockfds: [Int32: ssh_channel] = [:]
         
-    static let buflen = 512 * 1024
+    static let buflen = 4 * 1024
     var buffer = [UInt8](repeating: 0, count: buflen)
 
     init?(session: ssh_session, localPort: UInt16, remoteHost: String, remotePort: UInt16)  {
@@ -290,7 +290,7 @@ actor TerminalSession {
 
     var channel: ssh_channel!
     
-    static let buflen = 512 * 1024
+    static let buflen = 4 * 1024
     var buffer = [UInt8](repeating: 0, count: buflen)
 
     init?(session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
@@ -460,7 +460,7 @@ actor CommandSession {
 
     var channel: ssh_channel!
 
-    static let buflen = 512 * 1024
+    static let buflen = 4 * 1024
     var buffer = [UInt8](repeating: 0, count: buflen)
 
     init? (session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
@@ -741,17 +741,17 @@ class SSHDaemon: ObservableObject {
     }
     let connection = Connections()
 
-    static let buflen = 512 * 1024
+    static let buflen = 4 * 1024
     var buffer = [UInt8](repeating: 0, count: buflen)
     var task = Task<Void, Never> {}
     
     init() {
         signal(SIGPIPE, handler)
         
-        task = Task {
+        task = Task.detached {
             while true {
-                await processDataLoop()
-                try? await Task.sleep(nanoseconds: 1_000_000)
+                await self.processDataLoop()
+                try? await Task.sleep(nanoseconds: 50_000)
             }
         }
     }

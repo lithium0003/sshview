@@ -104,18 +104,15 @@ class InvisibleTextView: UIView, UIKeyInput {
             guard value >= 0x40, value <= 0x5F else  {
                 return
             }
-            print("^"+text)
             let code = value & 0x1F
             delegate?.insertCode(code: [code])
         }
         else {
-            print(text)
             delegate?.insertText(text: text)
         }
     }
 
     func deleteBackward() {
-        print("(delete)")
         delegate?.deleteText()
     }
     
@@ -298,7 +295,6 @@ class CanvasView: UIView {
                 }
                 let th = atan2(d.y, d.x)
                 let count = Int(length / 50.0) + 1
-                print(count, length, th)
                 if th >= -CGFloat.pi / 4, th < CGFloat.pi / 4 {
                     // right
                     if console.applicationCursor {
@@ -550,7 +546,6 @@ class consoleScreen: ObservableObject {
         ]
         let s = NSAttributedString(string: " ", attributes: stringAttributes).boundingRect(with: UIScreen.main.bounds.size, context: nil)
         let newSize = (width: Int(ceil(size.width) / floor(s.width)), height: Int(ceil(size.height) / floor(s.height)))
-        print(newSize)
         
         for i in 0..<screenText.count {
             if screenText[i].count < newSize.width {
@@ -933,7 +928,6 @@ class TerminalScreen: ObservableObject {
         var escSequence: [UInt8] = []
         var tmpBuf: [UInt8] = []
         
-        print(screenBuffer)
         for c in screenBuffer {
             if escSequence.count > 0  {
                 if c == 0x1B {
@@ -959,7 +953,6 @@ class TerminalScreen: ObservableObject {
                             continue
                         }
                         
-                        print(escSequence)
                         escSequence = []
                         continue
                     case 0x24:
@@ -986,7 +979,6 @@ class TerminalScreen: ObservableObject {
                         }
                         escSequence.append(c)
 
-                        print(escSequence)
                         escSequence = []
                         continue
                     }
@@ -1165,7 +1157,6 @@ class TerminalScreen: ObservableObject {
                     let command = String(bytes: [endc], encoding: .utf8)!
                     let Pt = String(bytes: escSequence[2...].dropLast(), encoding: .utf8)!
                     
-                    print(Pt, command)
                     if command == "@" {
                         // ICH
                         // CSI Ps @
@@ -1759,7 +1750,6 @@ class TerminalScreen: ObservableObject {
                     if v.count == 2 {
                         let Ps = String(bytes: v[0], encoding: .utf8)!
                         let Pt = String(bytes: v[1], encoding: .utf8)!
-                        print(Ps, Pt)
                         if Ps == "0" || Ps == "1" || Ps == "2" {
                             // window title
                             windowTitle = Pt
@@ -1854,7 +1844,6 @@ class TerminalScreen: ObservableObject {
         }
         screenBuffer = []
         screen.drawView()
-        print(screen.curX, screen.curY)
     }
 }
 
