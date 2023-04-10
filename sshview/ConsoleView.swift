@@ -55,19 +55,34 @@ struct ConsoleView: View {
                 term.screen.makeScreenView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .onAppear() {
+                        if textInputMode {
+                            return
+                        }
                         print("geometry:\(geometry.size.width):\(geometry.size.height)")
                         let newSize = term.screen.setSize(size: geometry.size)
-                        handler.screeSizeChane?(newSize.width, newSize.height)
+                        if newSize.width > 0, newSize.height > 0 {
+                            handler.screeSizeChange?(newSize.width, newSize.height)
+                        }
                     }
                     .onChange(of: geometry.size, perform: { newValue in
+                        if textInputMode {
+                            return
+                        }
                         print("geometry onChange:\(newValue.width):\(newValue.height)")
                         let newSize = term.screen.setSize(size: newValue)
-                        handler.screeSizeChane?(newSize.width, newSize.height)
+                        if newSize.width > 0, newSize.height > 0 {
+                            handler.screeSizeChange?(newSize.width, newSize.height)
+                        }
                     })
                     .onChange(of: term.screen.fontSize) { newValue in
+                        if textInputMode {
+                            return
+                        }
                         print("fontsize:\(term.screen.fontSize)")
                         let newSize = term.screen.setSize(size: geometry.size)
-                        handler.screeSizeChane?(newSize.width, newSize.height)
+                        if newSize.width > 0, newSize.height > 0 {
+                            handler.screeSizeChange?(newSize.width, newSize.height)
+                        }
                     }
             }
         }
@@ -97,6 +112,9 @@ struct ConsoleView: View {
                 textInputMode = false
             }
         }
+        .transaction { transaction in
+            transaction.animation = nil
+        }
         .sheet(isPresented: $textInputMode) {
             Group {
                 Text("Input insert text")
@@ -110,14 +128,14 @@ struct ConsoleView: View {
                 HStack {
                     Spacer()
                     Button("Done") {
-                        inHndler(Array(textInput.data(using: .utf8)!))
-                        textInputMode = false
                         term.screen.showingKeyboad = true
+                        textInputMode = false
+                        inHndler(Array(textInput.data(using: .utf8)!))
                     }
                     Spacer()
                     Button("Cancel", role: .cancel, action: {
-                        textInputMode = false
                         term.screen.showingKeyboad = true
+                        textInputMode = false
                     })
                     Spacer()
                 }

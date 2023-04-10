@@ -9,27 +9,74 @@ import Foundation
 import libssh
 import SwiftUI
 
+enum SSHError: Error {
+    case AError
+}
+
 struct UserIdentity {
     var userName = ""
     var b64_prrvateKey = ""
     var passphrease = ""
 }
 
-class LocalPortForward {
-    let queue: DispatchQueue
-    let session: ssh_session
+actor PollWait {
+    init() {
+        ssh_init()
+    }
+    deinit {
+        ssh_finalize()
+    }
+    
+    func _ssh_connect(_ session: ssh_session) -> Int32 {
+        ssh_connect(session)
+    }
+    
+    func _ssh_channel_open_session(_ channel: ssh_channel) -> Int32 {
+        ssh_channel_open_session(channel)
+    }
+
+    func _ssh_channel_request_pty(_ channel: ssh_channel) -> Int32 {
+        ssh_channel_request_pty(channel)
+    }
+
+    func _ssh_channel_change_pty_size(_ channel: ssh_channel, _ width: Int32, _ height: Int32) -> Int32 {
+        ssh_channel_change_pty_size(channel, width, height)
+    }
+    
+    func _ssh_channel_request_shell(_ channel: ssh_channel) -> Int32 {
+        ssh_channel_request_shell(channel)
+    }
+    
+    func _ssh_channel_request_exec(_ channel: ssh_channel, _ comand: [UInt8]) -> Int32 {
+        comand.withUnsafeBytes { ssh_channel_request_exec(channel, $0.baseAddress?.bindMemory(to: Int8.self, capacity: comand.count)) }
+    }
+    
+    func _ssh_channel_open_forward(_ forwarding_channel: ssh_channel?, _ remotehost: String, _ remotePort: Int32, _ localhost: String, _ localPort: Int32) -> Int32 {
+        ssh_channel_open_forward(forwarding_channel, remotehost, remotePort, localhost, localPort)
+    }
+    
+    func _ssh_select(_ in_channels: [ssh_channel?], _ out_channels: UnsafeMutablePointer<ssh_channel?>?, _ maxfd: socket_t, _ fds: UnsafeMutablePointer<fd_set>, _ timeout: UnsafeMutablePointer<timeval>) {
+        var in_channels = in_channels
+        in_channels.withUnsafeMutableBufferPointer { in_channels in
+            ssh_select(in_channels.baseAddress!, out_channels, maxfd, fds, timeout)
+        }
+    }
+}
+
+actor LocalPortForward {
     let localPort: UInt16
     let remoteHost: String
     let remotePort: UInt16
     let serverSockfd: Int32
 
-    var connSockfds: [Int32: ssh_channel] = [:]
+    let session: ssh_session
     
-    let buflen = 4 * 1024
-    lazy var buffer = [UInt8](repeating: 0, count: buflen)
+    var connSockfds: [Int32: ssh_channel] = [:]
+        
+    static let buflen = 512 * 1024
+    var buffer = [UInt8](repeating: 0, count: buflen)
 
-    init?(queue: DispatchQueue, session: ssh_session, localPort: UInt16, remoteHost: String, remotePort: UInt16) {
-        self.queue = queue
+    init?(session: ssh_session, localPort: UInt16, remoteHost: String, remotePort: UInt16)  {
         self.session = session
         self.localPort = localPort
         self.remoteHost = remoteHost
@@ -84,79 +131,84 @@ class LocalPortForward {
     }
     
     func closeConnection() {
-        queue.async { [self] in
-            for (fb, channel) in connSockfds {
-                close(fb)
-                ssh_channel_free(channel)
-            }
-            connSockfds = [:]
+        for (fb, channel) in connSockfds {
+            close(fb)
+            ssh_channel_free(channel)
         }
+        connSockfds = [:]
     }
     
-    func checkChennels() {
+    func checkChennels() async {
         var delChannels: [Int32] = []
-        queue.async { [self] in
-            for (fb, channel) in connSockfds {
-                if ssh_channel_is_open(channel) != 0, ssh_channel_is_eof(channel) == 0 {
-                    continue
-                }
+        for (fb, channel) in connSockfds {
+            if ssh_channel_is_open(channel) != 0, ssh_channel_is_eof(channel) == 0 {
+                continue
+            }
+            delChannels.append(fb)
+        }
+        for fb in delChannels {
+            if let channel = connSockfds.removeValue(forKey: fb) {
                 print("del \(fb)")
-                delChannels.append(fb)
                 close(fb)
                 ssh_channel_free(channel)
-            }
-            for fb in delChannels {
-                connSockfds.removeValue(forKey: fb)
             }
         }
     }
     
-    func createNewConnection(newsockfd: Int32) {
-        queue.async { [self] in
+    func createNewConnection(newsockfd: Int32) async throws {
+        do {
             let forwarding_channel = ssh_channel_new(session)
             guard forwarding_channel != nil else {
                 print("ssh_channel_new() failed")
-                close(newsockfd)
-                return
+                throw SSHError.AError
             }
-
-            let rc = ssh_channel_open_forward(forwarding_channel,
-                                          remoteHost, Int32(remotePort),
-                                          "127.0.0.1", Int32(localPort))
-            guard rc == SSH_OK else {
-                print("ssh_channel_open_forward() failed \(rc)")
-
+            do {
+                var rc: Int32
+                repeat {
+                    rc = await SSHDaemon.pollwait._ssh_channel_open_forward(forwarding_channel,
+                                                  remoteHost, Int32(remotePort),
+                                                  "127.0.0.1", Int32(localPort))
+                } while rc == SSH_AGAIN
+                if rc != SSH_OK {
+                    print("ssh_channel_open_forward() failed \(rc)")
+                    throw SSHError.AError
+                }
+                connSockfds[newsockfd] = forwarding_channel
+            }
+            catch {
                 ssh_channel_free(forwarding_channel)
-                close(newsockfd)
-                return
+                throw error
             }
-            
-            self.connSockfds[newsockfd] = forwarding_channel
+        }
+        catch {
+            close(newsockfd)
+            throw error
         }
     }
     
-    func process() {
+    func process() async throws {
         var fds = fd_set()
         var maxfd: socket_t = 0
         var timeout = timeval(tv_sec: 0, tv_usec: 0)
+        
+        var channels: [ssh_channel?] = []
         maxfd = max(maxfd, serverSockfd)
         __darwin_fd_set(serverSockfd, &fds)
         for fd in connSockfds.keys {
             maxfd = max(maxfd, fd)
             __darwin_fd_set(fd, &fds)
+            channels.append(connSockfds[fd])
         }
+        channels.append(nil)
         maxfd += 1
-        
-        let in_channels = UnsafeMutablePointer<ssh_channel?>.allocate(capacity: connSockfds.count+1)
-        let out_channels = UnsafeMutablePointer<ssh_channel?>.allocate(capacity: connSockfds.count+1)
-        for (i, channel) in connSockfds.values.enumerated() {
-            in_channels[i] = channel
-        }
-        in_channels[connSockfds.count] = nil
-        
-        ssh_select(in_channels, out_channels, maxfd, &fds, &timeout)
 
-        for i in 0..<connSockfds.count {
+        let out_channels = UnsafeMutablePointer<ssh_channel?>.allocate(capacity: channels.count)
+        defer {
+            out_channels.deallocate()
+        }
+        await SSHDaemon.pollwait._ssh_select(channels, out_channels, maxfd, &fds, &timeout)
+
+        for i in 0..<channels.count {
             guard let channel = out_channels[i] else {
                 break
             }
@@ -164,7 +216,7 @@ class LocalPortForward {
                 continue
             }
             print("ssh_channel_read")
-            let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read(channel, $0.baseAddress, UInt32(buflen), 0) }
+            let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read(channel, $0.baseAddress, UInt32(LocalPortForward.buflen), 0) }
             if nbytes < 0 {
                 print("ssh_channel_read() error")
                 close(fd)
@@ -181,12 +233,12 @@ class LocalPortForward {
                 print("write \(nbytes)")
             }
         }
-        
+
         for fd in connSockfds.keys {
             if __darwin_fd_isset(fd, &fds) != 0 {
                 print(fd)
                 if let channel = connSockfds[fd] {
-                    let n = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, buflen) }
+                    let n = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, LocalPortForward.buflen) }
                     if n < 0 {
                         print("\(fd) is error")
                     }
@@ -219,14 +271,15 @@ class LocalPortForward {
             var clilen = socklen_t()
             let newsockfd = accept(serverSockfd, &cli_addr, &clilen)
             print("accept \(newsockfd)")
-
-            createNewConnection(newsockfd: newsockfd)
+            
+            Task.detached {
+                try await self.createNewConnection(newsockfd: newsockfd)
+            }
         }
     }
 }
 
-class TerminalSession {
-    let queue: DispatchQueue
+actor TerminalSession {
     var width = 80
     var height = 24
     var isOpen = true
@@ -237,90 +290,109 @@ class TerminalSession {
 
     var channel: ssh_channel!
     
-    let buflen = 4 * 1024
-    lazy var buffer = [UInt8](repeating: 0, count: buflen)
+    static let buflen = 512 * 1024
+    var buffer = [UInt8](repeating: 0, count: buflen)
 
-    init?(queue: DispatchQueue, session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
+    init?(session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
         print("createTerminal")
-        self.queue = queue
-        queue.async { [self] in
-            guard let channel = ssh_channel_new(session) else {
-                isOpen = false
-                return
-            }
-            self.channel = channel
 
-            guard isOpen else { return }
-            var rc = ssh_channel_open_session(channel)
-            if rc != SSH_OK {
-                print("ssh_channel_open_session() failed \(rc)")
-                isOpen = false
-                ssh_channel_free(channel)
-            }
-
-            guard isOpen else { return }
-            rc = ssh_channel_request_pty(channel)
-            if rc != SSH_OK {
-                print("ssh_channel_request_pty() failed \(rc)")
-                isOpen = false
-                ssh_channel_close(channel)
-                ssh_channel_send_eof(channel)
-                ssh_channel_free(channel)
-            }
-
-            guard isOpen else { return }
-            rc = ssh_channel_change_pty_size(channel, Int32(width), Int32(height))
-            if rc != SSH_OK {
-                print("ssh_channel_change_pty_size() failed \(rc)")
-                isOpen = false
-                ssh_channel_close(channel)
-                ssh_channel_send_eof(channel)
-                ssh_channel_free(channel)
-            }
-
-            guard isOpen else { return }
-            rc = ssh_channel_request_shell(channel)
-            if rc != SSH_OK {
-                print("ssh_channel_request_shell() failed \(rc)")
-                isOpen = false
-                ssh_channel_close(channel)
-                ssh_channel_send_eof(channel)
-                ssh_channel_free(channel)
-            }
-
-            guard isOpen else { return }
-            self.stdinFnc = stdinFnc
-            self.stdoutFnc = stdoutFnc
-            self.stderrFnc = stderrFnc
+        guard let channel = ssh_channel_new(session) else {
+            isOpen = false
+            throw SSHError.AError
         }
+        self.channel = channel
+
+        do {
+            let t = Task {
+                do {
+                    var rc: Int32
+                    repeat {
+                        rc = await SSHDaemon.pollwait._ssh_channel_open_session(channel)
+                    } while rc == SSH_AGAIN
+                    if rc != SSH_OK {
+                        print("ssh_channel_open_session() failed \(rc)")
+                        throw SSHError.AError
+                    }
+                    
+                    do {
+                        repeat {
+                            rc = await SSHDaemon.pollwait._ssh_channel_request_pty(channel)
+                        } while rc == SSH_AGAIN
+                        if rc != SSH_OK {
+                            print("ssh_channel_request_pty() failed \(rc)")
+                            throw SSHError.AError
+                        }
+
+                        repeat {
+                            rc = await SSHDaemon.pollwait._ssh_channel_change_pty_size(channel, Int32(width), Int32(height))
+                        } while rc == SSH_AGAIN
+                        if rc != SSH_OK {
+                            print("ssh_channel_change_pty_size() failed \(rc)")
+                            throw SSHError.AError
+                        }
+
+                        repeat {
+                            rc = await SSHDaemon.pollwait._ssh_channel_request_shell(channel)
+                        } while rc == SSH_AGAIN
+                        if rc != SSH_OK {
+                            print("ssh_channel_request_shell() failed \(rc)")
+                            throw SSHError.AError
+                        }
+                    }
+                    catch {
+                        ssh_channel_close(channel)
+                        ssh_channel_send_eof(channel)
+                        throw error
+                    }
+                }
+                catch {
+                    ssh_channel_free(channel)
+                    throw error
+                }
+            }
+            try await t.result
+        }
+        catch {
+            isOpen = false
+            throw error
+        }
+        self.stdinFnc = stdinFnc
+        self.stdoutFnc = stdoutFnc
+        self.stderrFnc = stderrFnc
     }
         
     func closeConnection() {
-        queue.async { [self] in
-            stdinFnc = nil
-            stdoutFnc = nil
-            stderrFnc = nil
-            guard isOpen else { return }
+        stdinFnc = nil
+        stdoutFnc = nil
+        stderrFnc = nil
+        guard isOpen else { return }
+        isOpen = false
+        ssh_channel_close(channel)
+        ssh_channel_send_eof(channel)
+        ssh_channel_free(channel)
+    }
+    
+    func setNewsizeTerminal(newWidth: Int, newHeight: Int) async throws {
+        width = newWidth
+        height = newHeight
+        guard isOpen else { return }
+
+        do {
+            var rc: Int32
+            repeat {
+                rc = await SSHDaemon.pollwait._ssh_channel_change_pty_size(channel, Int32(width), Int32(height))
+            } while rc == SSH_AGAIN
+            if rc != SSH_OK {
+                print("ssh_channel_change_pty_size() failed \(rc)")
+                throw SSHError.AError
+            }
+        }
+        catch {
             isOpen = false
             ssh_channel_close(channel)
             ssh_channel_send_eof(channel)
             ssh_channel_free(channel)
-        }
-    }
-    
-    func setNewsizeTerminal(newWidth: Int, newHeight: Int) {
-        width = newWidth
-        height = newHeight
-        queue.async { [self] in
-            guard isOpen else { return }
-            let rc = ssh_channel_change_pty_size(channel, Int32(width), Int32(height))
-            if rc != SSH_OK {
-                print("ssh_channel_change_pty_size() failed \(rc)")
-                isOpen = false
-                ssh_channel_close(channel)
-                ssh_channel_send_eof(channel)
-                ssh_channel_free(channel)
-            }
+            throw error
         }
     }
     
@@ -333,7 +405,7 @@ class TerminalSession {
             return
         }
 
-        let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(buflen), 0, 0) }
+        let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(TerminalSession.buflen), 0, 0) }
         if nbytes < 0 {
             print("ssh_channel_read() error")
             ssh_channel_close(channel)
@@ -379,8 +451,7 @@ class TerminalSession {
     }
 }
 
-class CommandSession {
-    let queue: DispatchQueue
+actor CommandSession {
     var isOpen = true
     
     var stdoutFnc: ((ArraySlice<UInt8>)->Void)?
@@ -389,54 +460,67 @@ class CommandSession {
 
     var channel: ssh_channel!
 
-    let buflen = 4 * 1024
-    lazy var buffer = [UInt8](repeating: 0, count: buflen)
+    static let buflen = 512 * 1024
+    var buffer = [UInt8](repeating: 0, count: buflen)
 
-    init? (queue: DispatchQueue, session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
-        self.queue = queue
+    init? (session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
         self.stdinFnc = stdinFnc
         self.stdoutFnc = stdoutFnc
         self.stderrFnc = stderrFnc
         print("runCommand")
-        
-        queue.async { [self] in
-            guard let channel = ssh_channel_new(session) else {
-                isOpen = false
-                return
-            }
-            self.channel = channel
+        guard let channel = ssh_channel_new(session) else {
+            throw SSHError.AError
+        }
+        self.channel = channel
+        do {
+            let t = Task {
+                do {
+                    var rc: Int32
+                    repeat {
+                        rc = await SSHDaemon.pollwait._ssh_channel_open_session(channel)
+                    } while rc == SSH_AGAIN
+                    if rc != SSH_OK {
+                        print("ssh_channel_open_session() failed \(rc)")
+                        throw SSHError.AError
+                    }
 
-            guard isOpen else { return }
-            var rc = ssh_channel_open_session(channel)
-            if rc != SSH_OK {
-                print("ssh_channel_open_session() failed \(rc)")
-                isOpen = false
-                ssh_channel_free(channel)
+                    do {
+                        repeat {
+                            rc = await SSHDaemon.pollwait._ssh_channel_request_exec(channel, comand)
+                        } while rc == SSH_AGAIN
+                        if rc != SSH_OK {
+                            print("ssh_channel_request_exec() failed \(rc)")
+                            throw SSHError.AError
+                        }
+                    }
+                    catch {
+                        ssh_channel_close(channel)
+                        ssh_channel_send_eof(channel)
+                        throw error
+                    }
+                }
+                catch {
+                    ssh_channel_free(channel)
+                    throw error
+                }
             }
-
-            guard isOpen else { return }
-            rc = comand.withUnsafeBytes { ssh_channel_request_exec(channel, $0.baseAddress?.bindMemory(to: Int8.self, capacity: comand.count)) }
-            if rc != SSH_OK {
-                print("ssh_channel_request_exec() failed \(rc)")
-                isOpen = false
-                ssh_channel_close(channel)
-                ssh_channel_send_eof(channel)
-                ssh_channel_free(channel)
-            }
+            try await t.result
+        }
+        catch {
+            isOpen = false
+            throw error
         }
     }
 
     func closeConnection() {
-        queue.async { [self] in
-            stdinFnc = nil
-            stdoutFnc = nil
-            stderrFnc = nil
-            guard isOpen else { return }
-            isOpen = false
-            ssh_channel_close(channel)
-            ssh_channel_send_eof(channel)
-            ssh_channel_free(channel)
-        }
+        stdinFnc = nil
+        stdoutFnc = nil
+        stderrFnc = nil
+        guard isOpen else { return }
+        isOpen = false
+        ssh_channel_close(channel)
+        ssh_channel_send_eof(channel)
+        ssh_channel_free(channel)
     }
 
     func check() -> Bool {
@@ -448,7 +532,7 @@ class CommandSession {
             return
         }
 
-        let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(buflen), 0, 0) }
+        let nbytes = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(CommandSession.buflen), 0, 0) }
         if nbytes < 0 {
             print("ssh_channel_read() error")
             ssh_channel_close(channel)
@@ -463,7 +547,7 @@ class CommandSession {
         else {
             stdoutFnc?([])
         }
-        let nbytes2 = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(buflen), 1, 0) }
+        let nbytes2 = buffer.withUnsafeMutableBytes { ssh_channel_read_timeout(channel, $0.baseAddress, UInt32(CommandSession.buflen), 1, 0) }
         if nbytes2 < 0 {
             print("ssh_channel_read() error")
             ssh_channel_close(channel)
@@ -511,106 +595,121 @@ class CommandSession {
 }
 
 class SessionHandles {
-    let queue: DispatchQueue
     var session: ssh_session
     var logger: (String)->Void
-    var localForwards: [LocalPortForward] = []
-    var terminalSessions: [TerminalSession] = []
-    var commandSessions: [CommandSession] = []
+    actor Sessions {
+        var localForwards: [LocalPortForward] = []
+        var terminalSessions: [TerminalSession] = []
+        var commandSessions: [CommandSession] = []
+        
+        func addLocalForwards(forward: LocalPortForward) {
+            localForwards.append(forward)
+        }
+        
+        func addCommandSessions(command: CommandSession) {
+            commandSessions.append(command)
+        }
+        
+        func addTerminalSessions(terminal: TerminalSession) {
+            terminalSessions.append(terminal)
+        }
+        
+        func clear() async {
+            for tidx in (0..<terminalSessions.count).reversed() {
+                await terminalSessions[tidx].closeConnection()
+                terminalSessions.remove(at: tidx)
+            }
+            for cidx in (0..<commandSessions.count).reversed() {
+                await commandSessions[cidx].closeConnection()
+                commandSessions.remove(at: cidx)
+            }
+            for fidx in (0..<localForwards.count).reversed() {
+                await localForwards[fidx].closeConnection()
+                localForwards.remove(at: fidx)
+            }
+        }
+
+        func closeTerminal(terminalIdx: Int) async {
+            guard terminalIdx >= 0, terminalIdx < terminalSessions.count else {
+                return
+            }
+            await terminalSessions[terminalIdx].closeConnection()
+            terminalSessions.remove(at: terminalIdx)
+        }
+    }
+    let sessions = Sessions()
     
-    init(queue: DispatchQueue, session: ssh_session, logger: @escaping (String)->Void) {
-        self.queue = queue
+    init(session: ssh_session, logger: @escaping (String)->Void) {
         self.session = session
         self.logger = logger
     }
     
-    func disconnect() {
-        for tidx in (0..<terminalSessions.count).reversed() {
-            terminalSessions[tidx].closeConnection()
-            terminalSessions.remove(at: tidx)
+    func disconnect() async {
+        await sessions.clear()
+        ssh_disconnect(session)
+        ssh_free(session)
+    }
+    
+    func process() async throws {
+        for localForward in await sessions.localForwards {
+            try await localForward.process()
         }
-        for cidx in (0..<commandSessions.count).reversed() {
-            commandSessions[cidx].closeConnection()
-            commandSessions.remove(at: cidx)
+        for terminalSession in await sessions.terminalSessions {
+            await terminalSession.process()
         }
-        for fidx in (0..<localForwards.count).reversed() {
-            localForwards[fidx].closeConnection()
-            localForwards.remove(at: fidx)
+        for commandSession in await sessions.commandSessions {
+            await commandSession.process()
         }
-        queue.async { [self] in
-            ssh_disconnect(session)
-            ssh_free(session)
-            
-            ssh_finalize()
+        for localForward in await sessions.localForwards {
+            await localForward.checkChennels()
         }
     }
     
-    func process() {
-        queue.async { [self] in
-            for localForward in localForwards {
-                localForward.process()
-            }
-            for terminalSession in terminalSessions {
-                terminalSession.process()
-            }
-            for commandSession in commandSessions {
-                commandSession.process()
-            }
-            for localForward in localForwards {
-                localForward.checkChennels()
-            }
-        }
-    }
-    
-    func localPortFoward(localPort: UInt16, remoteHost: String, remotePort: UInt16) -> Bool {
-        guard let newForward = LocalPortForward(queue: queue, session: session, localPort: localPort, remoteHost: remoteHost, remotePort: remotePort) else {
+    func localPortFoward(localPort: UInt16, remoteHost: String, remotePort: UInt16) async -> Bool {
+        guard let newForward = await LocalPortForward(session: session, localPort: localPort, remoteHost: remoteHost, remotePort: remotePort) else {
             return false
         }
-        localForwards.append(newForward)
+        await sessions.addLocalForwards(forward: newForward)
         return true
     }
     
-    func runCommand(comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
-        guard let newCommand = CommandSession(queue: queue, session: session, comand: comand, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc) else {
+    func runCommand(comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
+        guard let newCommand = try await CommandSession(session: session, comand: comand, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc) else {
             return
         }
-        commandSessions.append(newCommand)
+        await sessions.addCommandSessions(command: newCommand)
     }
     
-    func createTerminal(stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
-        guard let newTerminal = TerminalSession(queue: queue, session: session, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc) else {
+    func createTerminal(stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
+        guard let newTerminal = try await TerminalSession(session: session, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc) else {
             return
         }
-        terminalSessions.append(newTerminal)
+        await sessions.addTerminalSessions(terminal: newTerminal)
     }
     
-    func setNewsizeTerminal(terminalIdx: Int, newWidth: Int, newHeight: Int) {
-        guard terminalIdx >= 0, terminalIdx < terminalSessions.count else {
+    func setNewsizeTerminal(terminalIdx: Int, newWidth: Int, newHeight: Int) async throws {
+        guard terminalIdx >= 0, await terminalIdx < sessions.terminalSessions.count else {
             return
         }
-        terminalSessions[terminalIdx].setNewsizeTerminal(newWidth: newWidth, newHeight: newHeight)
+        try await sessions.terminalSessions[terminalIdx].setNewsizeTerminal(newWidth: newWidth, newHeight: newHeight)
     }
     
-    func checkTerminal(terminalIdx: Int) -> Bool {
-        guard terminalIdx >= 0, terminalIdx < terminalSessions.count else {
+    func checkTerminal(terminalIdx: Int) async -> Bool {
+        guard terminalIdx >= 0, await terminalIdx < sessions.terminalSessions.count else {
             return false
         }
-        return terminalSessions[terminalIdx].check()
+        return await sessions.terminalSessions[terminalIdx].check()
     }
     
-    func closeTerminal(terminalIdx: Int) {
-        guard terminalIdx >= 0, terminalIdx < terminalSessions.count else {
-            return
-        }
-        terminalSessions[terminalIdx].closeConnection()
-        terminalSessions.remove(at: terminalIdx)
+    func closeTerminal(terminalIdx: Int) async {
+        await sessions.closeTerminal(terminalIdx: terminalIdx)
     }
 
-    func checkCommand(commandIdx: Int) -> Bool {
-        guard commandIdx >= 0, commandIdx < commandSessions.count else {
+    func checkCommand(commandIdx: Int) async -> Bool {
+        guard commandIdx >= 0, await commandIdx < sessions.commandSessions.count else {
             return false
         }
-        return commandSessions[commandIdx].check()
+        return await sessions.commandSessions[commandIdx].check()
     }
     
 }
@@ -621,50 +720,56 @@ let handler: @convention(c) (Int32) -> () = { sig in
 }
 
 class SSHDaemon: ObservableObject {
-    var connections: [SessionHandles] = []
-    let opQueue = OperationQueue()
-    var timer: DispatchSourceTimer
+    static let pollwait = PollWait()
+    
+    actor Connections {
+        var connections: [SessionHandles] = []
 
-    let buflen = 4 * 1024
-    lazy var buffer = [UInt8](repeating: 0, count: buflen)
+        func add(newConnection: SessionHandles) {
+            connections.append(newConnection)
+        }
+        
+        func disconnect(session: ssh_session) async {
+            for i in 0..<connections.count {
+                if connections[i].session == session {
+                    await connections[i].disconnect()
+                    connections.remove(at: i)
+                    break
+                }
+            }
+        }
+    }
+    let connection = Connections()
 
+    static let buflen = 512 * 1024
+    var buffer = [UInt8](repeating: 0, count: buflen)
+    var task = Task<Void, Never> {}
+    
     init() {
         signal(SIGPIPE, handler)
         
-        ssh_init()
-        
-        timer = DispatchSource.makeTimerSource(flags: [], queue: .global())
-        timer.schedule(deadline: .now(), repeating: 0.005)
-        timer.setEventHandler {
-            self.processDataLoop()
+        task = Task {
+            while true {
+                await processDataLoop()
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
         }
-        timer.resume()
     }
     
     deinit {
-        timer.cancel()
-        _ = ssh_finalize()
+        task.cancel()
     }
     
 
-    func connect(remoteServer: String, remotePort: Int, user_id: UserIdentity, server_hashkey: [UInt8], logger: @escaping (String)->Void, return_hashkey: @escaping ([UInt8])->Void) -> ssh_session? {
+    func connect(remoteServer: String, remotePort: Int, user_id: UserIdentity, server_hashkey: [UInt8], logger: @escaping (String)->Void, return_hashkey: @escaping ([UInt8])->Void) async throws -> ssh_session {
         
         print("SSH connect \(remoteServer):\(remotePort)")
-        let queue = DispatchQueue(label: "session")
 
-        let session = queue.sync { () -> ssh_session? in
-            ssh_init()
-
-            guard let session = ssh_new() else {
-                return nil
-            }
-            return session
+        guard var session = ssh_new() else {
+            throw SSHError.AError
         }
-        
-        queue.async { [self] in
-            guard var session = session else {
-                return
-            }
+        do {
+            ssh_set_blocking(session, 0);
 
             var verbosity = SSH_LOG_PROTOCOL
             let remoteServer = remoteServer.cString(using: .utf8)
@@ -676,160 +781,222 @@ class SSHDaemon: ObservableObject {
             ssh_options_set(session, SSH_OPTIONS_PORT, &remotePort)
             ssh_options_set(session, SSH_OPTIONS_USER, userName)
 
-            guard ssh_connect(session) == SSH_OK else {
+            var ret: Int32
+            repeat {
+                ret = await SSHDaemon.pollwait._ssh_connect(session)
+            } while ret == SSH_AGAIN
+            if ret == SSH_ERROR {
                 let e = String(cString: ssh_get_error(&session))
                 logger("ssh_connect() failed " + e)
-                ssh_free(session)
-                return
+                throw SSHError.AError
             }
 
-            guard let srv_hkey = SSHDaemon.verify_knownhost(session) else {
-                logger("host key is not match.")
-                ssh_disconnect(session)
-                ssh_free(session)
-                return
-            }
-            logger("server key : " + srv_hkey.map({ String(format: "%02x", $0) }).joined(separator: ":"))
-
-            if server_hashkey.count > 0 {
-                if !srv_hkey.elementsEqual(server_hashkey) {
-                    logger("server key not match!")
-                    ssh_disconnect(session)
-                    ssh_free(session)
-                    return
+            do {
+                guard let srv_hkey = SSHDaemon.verify_knownhost(session) else {
+                    logger("host key is not match.")
+                    throw SSHError.AError
                 }
+
+                logger("server key : " + srv_hkey.map({ String(format: "%02x", $0) }).joined(separator: ":"))
+
+                if server_hashkey.count > 0 {
+                    if !srv_hkey.elementsEqual(server_hashkey) {
+                        logger("server key not match!")
+                        throw SSHError.AError
+                    }
+                }
+
+                return_hashkey(srv_hkey)
+
+                let b64_prikey = user_id.b64_prrvateKey.cString(using: .utf8)
+                let passphrase = user_id.passphrease.cString(using: .utf8)
+                var prikey: ssh_key!
+                var pubkey: ssh_key!
+
+                guard ssh_pki_import_privkey_base64(b64_prikey, passphrase, nil, nil, &prikey) == SSH_OK, prikey != nil else {
+                    logger("private key cannot load")
+                    throw SSHError.AError
+                }
+                defer {
+                    ssh_key_free(prikey)
+                }
+
+                guard ssh_pki_export_privkey_to_pubkey(prikey, &pubkey) == SSH_OK, pubkey != nil else {
+                    logger("public key cannot convert")
+                    throw SSHError.AError
+                }
+                defer {
+                    ssh_key_free(pubkey)
+                }
+
+                var rc: Int32
+                repeat {
+                    rc = ssh_userauth_try_publickey(session, nil, pubkey)
+                } while rc == SSH_AUTH_AGAIN.rawValue
+                if rc != SSH_AUTH_SUCCESS.rawValue {
+                    logger("auth error (public key) \(rc)")
+                    throw SSHError.AError
+                }
+
+                repeat {
+                    rc = ssh_userauth_publickey(session, nil, prikey)
+                } while rc == SSH_AUTH_AGAIN.rawValue
+                if rc != SSH_AUTH_SUCCESS.rawValue {
+                    logger("auth error (public key) \(rc)")
+                    throw SSHError.AError
+                }
+                
+                logger("Connect successfully")
+                
+                await connection.add(newConnection: SessionHandles(session: session, logger: logger))
             }
-            return_hashkey(srv_hkey)
-
-            let b64_prikey = user_id.b64_prrvateKey.cString(using: .utf8)
-            let passphrase = user_id.passphrease.cString(using: .utf8)
-            var prikey: ssh_key!
-            var pubkey: ssh_key!
-
-            guard ssh_pki_import_privkey_base64(b64_prikey, passphrase, nil, nil, &prikey) == SSH_OK, prikey != nil else {
-                logger("private key cannot load")
+            catch {
                 ssh_disconnect(session)
-                ssh_free(session)
-                return
+                throw error
             }
-            defer {
-                ssh_key_free(prikey)
-            }
-
-            guard ssh_pki_export_privkey_to_pubkey(prikey, &pubkey) == SSH_OK else {
-                logger("public key conversion failed")
-                ssh_disconnect(session)
-                ssh_free(session)
-                return
-            }
-            defer {
-                ssh_key_free(pubkey)
-            }
-            
-            var rc = ssh_userauth_try_publickey(session, nil, pubkey)
-            guard rc == SSH_AUTH_SUCCESS.rawValue else {
-                logger("auth error (public key) \(rc)")
-                ssh_disconnect(session)
-                ssh_free(session)
-                return
-            }
-
-            rc = ssh_userauth_publickey(session, nil, prikey)
-            guard rc == SSH_AUTH_SUCCESS.rawValue else {
-                logger("auth error (public key) \(rc)")
-                ssh_disconnect(session)
-                ssh_free(session)
-                return
-            }
-
-            logger("Connect successfully")
-
-            connections.append(SessionHandles(queue: queue, session: session, logger: logger))
         }
+        catch {
+            ssh_free(session)
+            throw error
+        }
+
         return session
     }
     
-    func disconnect(session: ssh_session) {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                connections[i].disconnect()
-                connections.remove(at: i)
-                break
-            }
-        }
+    func disconnect(session: ssh_session) async {
+        await connection.disconnect(session: session)
     }
     
-    func localPortFoward(session: ssh_session, localPort: UInt16, remoteHost: String, remotePort: UInt16) -> Bool {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                return connections[i].localPortFoward(localPort: localPort, remoteHost: remoteHost, remotePort: remotePort)
+    func localPortFoward(session: ssh_session, localPort: UInt16, remoteHost: String, remotePort: UInt16) async -> Bool {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                return await connection.connections[i].localPortFoward(localPort: localPort, remoteHost: remoteHost, remotePort: remotePort)
             }
         }
         return false
     }
     
-    func runCommand(session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?)  {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                connections[i].runCommand(comand: comand, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc)
+    func runCommand(session: ssh_session, comand: [UInt8], stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                try await connection.connections[i].runCommand(comand: comand, stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc)
             }
         }
     }
     
-    func createTerminal(session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                connections[i].createTerminal(stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc)
+    func createTerminal(session: ssh_session, stdinFnc: (()->[UInt8]?)?, stdoutFnc: ((ArraySlice<UInt8>)->Void)?, stderrFnc: ((ArraySlice<UInt8>)->Void)?) async throws {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                try await connection.connections[i].createTerminal(stdinFnc: stdinFnc, stdoutFnc: stdoutFnc, stderrFnc: stderrFnc)
             }
         }
     }
     
-    func setNewsizeTerminal(session: ssh_session, terminalIdx: Int, newWidth: Int, newHeight: Int) {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                connections[i].setNewsizeTerminal(terminalIdx: terminalIdx, newWidth: newWidth, newHeight: newHeight)
+    func setNewsizeTerminal(session: ssh_session, terminalIdx: Int, newWidth: Int, newHeight: Int) async throws {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                try await connection.connections[i].setNewsizeTerminal(terminalIdx: terminalIdx, newWidth: newWidth, newHeight: newHeight)
             }
         }
     }
     
-    func checkSession(session: ssh_session) -> Bool {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
+    func waitConnection(session: ssh_session, timeout: Duration) async throws {
+        let task = Task {
+            while await !checkSession(session: session) {
+                try Task.checkCancellation()
+                try await Task.sleep(for: Duration.seconds(1))
+            }
+        }
+        let timeoutTask = Task {
+            try? await Task.sleep(for: timeout)
+            task.cancel()
+        }
+        try await task.value
+        timeoutTask.cancel()
+    }
+    
+    func checkSession(session: ssh_session) async -> Bool {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
                 return true
             }
         }
         return false
     }
-    
-    func checkTerminal(session: ssh_session, terminalIdx: Int) -> Bool {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                return connections[i].checkTerminal(terminalIdx: terminalIdx)
+
+    func waitTerminal(session: ssh_session, terminalIdx: Int, timeout: Duration) async -> Bool {
+        let task = Task {
+            do {
+                while await !checkTerminal(session: session, terminalIdx: terminalIdx) {
+                    try Task.checkCancellation()
+                    try await Task.sleep(for: Duration.seconds(1))
+                }
+                return true
+            }
+            catch {
+                return false
+            }
+        }
+        let timeoutTask = Task {
+            try? await Task.sleep(for: timeout)
+            task.cancel()
+        }
+        let pass = await task.value
+        timeoutTask.cancel()
+        return pass
+    }
+
+    func checkTerminal(session: ssh_session, terminalIdx: Int) async -> Bool {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                return await connection.connections[i].checkTerminal(terminalIdx: terminalIdx)
             }
         }
         return false
     }
     
-    func closeTerminal(session: ssh_session, terminalIdx: Int) {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                return connections[i].closeTerminal(terminalIdx: terminalIdx)
+    func closeTerminal(session: ssh_session, terminalIdx: Int) async {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                return await connection.connections[i].closeTerminal(terminalIdx: terminalIdx)
             }
         }
     }
 
-    func checkCommand(session: ssh_session, commandIdx: Int) -> Bool {
-        for i in 0..<connections.count {
-            if connections[i].session == session {
-                return connections[i].checkCommand(commandIdx: commandIdx)
+    func waitCommand(session: ssh_session, commandIdx: Int, timeout: Duration) async -> Bool {
+        let task = Task {
+            do {
+                while await !checkCommand(session: session, commandIdx: commandIdx) {
+                    try Task.checkCancellation()
+                    try await Task.sleep(for: Duration.seconds(1))
+                }
+                return true
+            }
+            catch {
+                return false
+            }
+        }
+        let timeoutTask = Task {
+            try? await Task.sleep(for: timeout)
+            task.cancel()
+        }
+        let pass = await task.value
+        timeoutTask.cancel()
+        return pass
+    }
+
+    func checkCommand(session: ssh_session, commandIdx: Int) async -> Bool {
+        for i in await 0..<connection.connections.count {
+            if await connection.connections[i].session == session {
+                return await connection.connections[i].checkCommand(commandIdx: commandIdx)
             }
         }
         return false
     }
 
-    func processDataLoop() {
-        for c in connections {
-            c.process()
+    func processDataLoop() async {
+        for c in await connection.connections {
+            try? await c.process()
         }
     }
     

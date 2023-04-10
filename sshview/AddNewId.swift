@@ -10,7 +10,7 @@ import libssh
 
 struct AddNewId: View {
     @EnvironmentObject var userProfile: UserProfile
-    @Binding var newId: UUID
+    @EnvironmentObject var target: Targets
 
     @State private var showSheet = false
     let keytype = ["rsa","ecdsa","ed25519"]
@@ -27,7 +27,6 @@ struct AddNewId: View {
     """
     @State private var publicKey = ""
     
-    @Binding var isShowSubView: Bool
     @State private var showingExporter = false
     @State private var pubFile = TextFile()
     @State private var isImporting = false
@@ -233,10 +232,10 @@ struct AddNewId: View {
                     return
                 }
                 let newuser = UserIdItem(title: idname, userName: username, b64_prrvateKey: privateKey, passphrease: passphease)
-                newId = newuser.id
+                target.userId = newuser.id
                 userProfile.userid.append(newuser)
                 
-                isShowSubView = false
+                _ = target.showTarget.popLast()
             }) {
                 Text("Done")
                     .font(.title)
@@ -248,10 +247,7 @@ struct AddNewId: View {
 }
 
 struct AddNewId_Previews: PreviewProvider {
-    @State static var newid = UUID()
-    @State static var isShowSubView = false
-    
     static var previews: some View {
-        AddNewId(newId: $newid, isShowSubView: $isShowSubView)
+        AddNewId()
     }
 }

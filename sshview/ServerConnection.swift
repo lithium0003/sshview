@@ -8,9 +8,13 @@
 import SwiftUI
 import libssh
 
-class connectionOperation: Operation {
+enum ConnectionError: Error {
+    case BError
+}
+
+class connectionTask {
     let sshDaemon: SSHDaemon
-    let depend: connectionOperation?
+    let depend: connectionTask?
     let localPort: UInt16
     let remoteHost: String
     let remotePort: UInt16
@@ -20,7 +24,7 @@ class connectionOperation: Operation {
     let return_hashkey: ([UInt8])->Void
     var session: ssh_session!
     
-    init(sshDaemon: SSHDaemon, depend: connectionOperation?, localPort: UInt16, remoteHost: String, remotePort: UInt16, server_hashkey: [UInt8], userid: UserIdentity, logger: @escaping (String)->Void, return_hashkey: @escaping ([UInt8])->Void) {
+    init(sshDaemon: SSHDaemon, depend: connectionTask?, localPort: UInt16, remoteHost: String, remotePort: UInt16, server_hashkey: [UInt8], userid: UserIdentity, logger: @escaping (String)->Void, return_hashkey: @escaping ([UInt8])->Void) {
         self.sshDaemon = sshDaemon
         self.depend = depend
         self.localPort = localPort
@@ -33,24 +37,37 @@ class connectionOperation: Operation {
         self.session = nil
     }
     
-    override func main() {
+    func run() async throws -> ssh_session {
         if let depend = depend {
-            guard let parentSession = depend.session else {
-                return
+            Task {
+                try await Task.sleep(for: Duration.seconds(15))
+                guard let parentSession = depend.session else {
+                    throw ConnectionError.BError
+                }
+                if await !sshDaemon.checkSession(session: parentSession) {
+                    throw ConnectionError.BError
+                }
             }
-            var timeout = 15
-            while timeout > 0, !sshDaemon.checkSession(session: parentSession) {
-                Thread.sleep(forTimeInterval: 1.0)
-                timeout -= 1
+            guard await sshDaemon.localPortFoward(session: try await depend.run(), localPort: localPort, remoteHost: remoteHost, remotePort: UInt16(remotePort)) else {
+                throw ConnectionError.BError
             }
-            guard sshDaemon.localPortFoward(session: parentSession, localPort: localPort, remoteHost: remoteHost, remotePort: UInt16(remotePort)) else {
-                return
-            }
-            session = sshDaemon.connect(remoteServer: "localhost", remotePort: Int(localPort), user_id: userid, server_hashkey: server_hashkey, logger: logger, return_hashkey: return_hashkey)
+            session = try await sshDaemon.connect(remoteServer: "localhost", remotePort: Int(localPort), user_id: userid, server_hashkey: server_hashkey, logger: logger, return_hashkey: return_hashkey)
         }
         else {
-            session = sshDaemon.connect(remoteServer: remoteHost, remotePort: Int(remotePort), user_id: userid, server_hashkey: server_hashkey, logger: logger, return_hashkey: return_hashkey)
+            session = try await sshDaemon.connect(remoteServer: remoteHost, remotePort: Int(remotePort), user_id: userid, server_hashkey: server_hashkey, logger: logger, return_hashkey: return_hashkey)
         }
+        return session
+    }
+    
+    func session_list() -> [ssh_session] {
+        var ret: [ssh_session] = []
+        ret.append(session)
+        var prev = depend
+        while prev != nil {
+            ret.append(prev!.session)
+            prev = prev!.depend
+        }
+        return ret
     }
 }
 
@@ -82,27 +99,23 @@ struct ServerConnection: View {
     @State var browserURL = ""
     @State var initTimeout = 15
     
-    @State var queue = OperationQueue()
     @State var timer1: DispatchSourceTimer?
     @State var timer2: DispatchSourceTimer?
     
-    func connect(serverID: UUID) -> [connectionOperation] {
+    func connect(serverID: UUID) throws -> connectionTask {
         guard let server = serverProfile.servers.first(where: { $0.id == serverID }) else {
-            return []
+            throw ConnectionError.BError
         }
         guard let userID = userProfile.userid.first(where: { $0.id == server.userIDtag }) else {
-            return []
+            throw ConnectionError.BError
         }
         if let proxy = server.proxyServerID {
-            let operations = connect(serverID: proxy)
-            guard let proxyOperation = operations.last else {
-                return []
-            }
+            let prevTask = try connect(serverID: proxy)
             
             let localPort = UInt16.random(in: 1024...UInt16.max)
             let userIdentity = UserIdentity(userName: userID.userName, b64_prrvateKey: userID.b64_prrvateKey, passphrease: userID.passphrease)
 
-            let op = connectionOperation(sshDaemon: sshDaemon, depend: proxyOperation, localPort: localPort, remoteHost: server.remoteHost, remotePort: UInt16(server.remotePort), server_hashkey: server.serverKeyHash, userid: userIdentity, logger: { log in
+            return connectionTask(sshDaemon: sshDaemon, depend: prevTask, localPort: localPort, remoteHost: server.remoteHost, remotePort: UInt16(server.remotePort), server_hashkey: server.serverKeyHash, userid: userIdentity, logger: { log in
                 DispatchQueue.main.async {
                     text += log + "\n"
                 }
@@ -113,13 +126,11 @@ struct ServerConnection: View {
                     }
                 }
             })
-            op.addDependency(proxyOperation)
-            return operations + [op]
         }
         else {
             let userIdentity = UserIdentity(userName: userID.userName, b64_prrvateKey: userID.b64_prrvateKey, passphrease: userID.passphrease)
             
-            let op = connectionOperation(sshDaemon: sshDaemon, depend: nil, localPort: 0, remoteHost: server.remoteHost, remotePort: UInt16(server.remotePort), server_hashkey: server.serverKeyHash, userid: userIdentity, logger: { log in
+            return connectionTask(sshDaemon: sshDaemon, depend: nil, localPort: 0, remoteHost: server.remoteHost, remotePort: UInt16(server.remotePort), server_hashkey: server.serverKeyHash, userid: userIdentity, logger: { log in
                 DispatchQueue.main.async {
                     text += log + "\n"
                 }
@@ -130,43 +141,34 @@ struct ServerConnection: View {
                     }
                 }
             })
-            return [op]
         }
     }
 
-    func connect() {
+    @MainActor
+    func connect() async throws {
         guard let server = serverProfile.servers.first(where: { $0.id == serverTag }) else {
-            removeTag()
-            return
+            throw ConnectionError.BError
         }
-        remoteHost = server.remoteHost
-        remotePort = server.remotePort
-        let operations = connect(serverID: server.id)
-        if operations.isEmpty {
-            removeTag()
-            return
+        Task { @MainActor in
+            remoteHost = server.remoteHost
+            remotePort = server.remotePort
         }
+        let task = try connect(serverID: server.id)
         
-        queue.addOperations(operations, waitUntilFinished: true)
-        
-        session = operations.last?.session
-        guard session != nil else {
-            removeTag()
-            return
-        }
-        session_list = operations.map({ $0.session })
+        session = try await task.run()
+        session_list = task.session_list()
         
         if let command = server.serverCommand {
             regexString = server.grepPortFoward
             fixedPort = server.portFoward
-            runCommand(command: Array(command.data(using: .utf8)!) + [0])
+            try await runCommand(command: Array(command.data(using: .utf8)!) + [0])
         }
         else {
-            allcateConsole()
+            try await allcateConsole()
         }
     }
     
-    func runCommand(command: [UInt8]) {
+    func runCommand(command: [UInt8]) async throws{
         guard let session = session else {
             return
         }
@@ -175,144 +177,127 @@ struct ServerConnection: View {
             isShowing = true
         }
 
-        timer1 = DispatchSource.makeTimerSource(flags: [], queue: .global(qos: .background))
-        timer1?.schedule(deadline: .now(), repeating: 1.0)
-        timer1?.setEventHandler {
-            if initTimeout > 0 {
-                if !sshDaemon.checkSession(session: session) {
-                    initTimeout -= 1
-                    return
-                }
-                guard let stdInFcn = handler.stdInFcn else {
-                    return
-                }
-                guard let stdOutFcn = handler.stdOutFcn else {
-                    return
-                }
-
-                timer1?.cancel()
-                
-                sshDaemon.runCommand(session: session, comand: command, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: stdOutFcn)
-
-                var timeout = 20
-                while timeout > 0, !sshDaemon.checkCommand(session: session, commandIdx: 0) {
-                    Thread.sleep(forTimeInterval: 1.0)
-                    timeout -= 1
-                }
-            }
-            else {
-                timer1?.cancel()
-            }
-            timer2?.resume()
+        try await sshDaemon.waitConnection(session: session, timeout: Duration.seconds(15))
+        guard let stdInFcn = handler.stdInFcn else {
+            return
         }
-        timer1?.resume()
+        guard let stdOutFcn = handler.stdOutFcn else {
+            return
+        }
 
-        timer2 = DispatchSource.makeTimerSource(flags: [], queue: .global(qos: .background))
-        timer2?.schedule(deadline: .now(), repeating: 5.0)
-        timer2?.setEventHandler {
-            if forwardPort == 0, let grep = regexString {
-                do {
-                    let regex = try NSRegularExpression(pattern: grep, options: NSRegularExpression.Options())
-                    let output = String(bytes: bufStdout, encoding: .utf8)!
-                    let results  = regex.matches(in: output, range: NSMakeRange(0, output.count))
-                    if results.count > 0, results[0].numberOfRanges > 1 {
-                        forwardPort = Int(NSString(string: output).substring(with: results[0].range(at: 1))) ?? 0
-                        if results[0].numberOfRanges > 2 {
-                            browserURL = NSString(string: output).substring(with: results[0].range(at: 2))
-                        }
+        Task {
+            defer {
+                DispatchQueue.main.async {
+                    handler.stdInFcn = nil
+                    handler.stdOutFcn = nil
+                    handler.screeSizeChange = nil
+                }
+
+                Task {
+                    for session1 in session_list.reversed() {
+                        await sshDaemon.disconnect(session: session1)
                     }
                 }
-                catch {
-                    print(error)
+                DispatchQueue.main.async {
+                    isShowing = false
                 }
-                print(forwardPort)
-                if forwardPort > 0 {
-                    browser()
+                DispatchQueue.main.async {
+                    removeTag()
                 }
             }
-            if forwardPort == 0, fixedPort > 0 {
-                forwardPort = fixedPort
-                print(forwardPort)
-                browser()
+
+            do {
+                try await sshDaemon.runCommand(session: session, comand: command, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: stdOutFcn)
+                if await sshDaemon.waitCommand(session: session, commandIdx: 0, timeout: Duration.seconds(20)) {
+                    while await sshDaemon.checkCommand(session: session, commandIdx: 0) {
+                        if forwardPort == 0, let grep = regexString {
+                            do {
+                                let regex = try NSRegularExpression(pattern: grep, options: NSRegularExpression.Options())
+                                let output = String(bytes: bufStdout, encoding: .utf8)!
+                                let results  = regex.matches(in: output, range: NSMakeRange(0, output.count))
+                                if results.count > 0, results[0].numberOfRanges > 1 {
+                                    forwardPort = Int(NSString(string: output).substring(with: results[0].range(at: 1))) ?? 0
+                                    if results[0].numberOfRanges > 2 {
+                                        browserURL = NSString(string: output).substring(with: results[0].range(at: 2))
+                                    }
+                                }
+                            }
+                            catch {
+                                print(error)
+                                throw ConnectionError.BError
+                            }
+                            print(forwardPort)
+                            if forwardPort > 0 {
+                                await browser()
+                            }
+                        }
+                        if forwardPort == 0, fixedPort > 0 {
+                            forwardPort = fixedPort
+                            print(forwardPort)
+                            await browser()
+                        }
+                        
+                        try await Task.sleep(for: Duration.seconds(1))
+                    }
+                }
             }
-            
-            if sshDaemon.checkCommand(session: session, commandIdx: 0) {
-                return
-            }
-            timer2?.cancel()
-            
-            DispatchQueue.main.async {
-                handler.stdInFcn = nil
-                handler.stdOutFcn = nil
+            catch {
             }
         }
     }
     
-    func allcateConsole() {
+    func allcateConsole() async throws {
         guard let session = session else {
             return
         }
 
         DispatchQueue.main.async {
-            handler.screeSizeChane = { newWidth, newHeight in
-                sshDaemon.setNewsizeTerminal(session: session, terminalIdx: 0, newWidth: newWidth, newHeight: newHeight)
+            handler.screeSizeChange = { newWidth, newHeight in
+                Task {
+                    try? await sshDaemon.setNewsizeTerminal(session: session, terminalIdx: 0, newWidth: newWidth, newHeight: newHeight)
+                }
             }
             isShowing = true
         }
 
-        timer1 = DispatchSource.makeTimerSource(flags: [], queue: .global(qos: .background))
-        timer1?.schedule(deadline: .now(), repeating: 1.0)
-        timer1?.setEventHandler {
-            if initTimeout > 0 {
-                if !sshDaemon.checkSession(session: session) {
-                    initTimeout -= 1
-                    return
-                }
-                guard let stdInFcn = handler.stdInFcn else {
-                    return
-                }
-                guard let stdOutFcn = handler.stdOutFcn else {
-                    return
-                }
-                timer1?.cancel()
-
-                sshDaemon.createTerminal(session: session, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: nil)
-
-                var timeout = 20
-                while timeout > 0, !sshDaemon.checkTerminal(session: session, terminalIdx: 0) {
-                    Thread.sleep(forTimeInterval: 1.0)
-                    timeout -= 1
-                }
-            }
-            else {
-                timer1?.cancel()
-            }
-            timer2?.resume()
+        try await sshDaemon.waitConnection(session: session, timeout: Duration.seconds(15))
+        guard let stdInFcn = handler.stdInFcn else {
+            return
         }
-        timer1?.resume()
+        guard let stdOutFcn = handler.stdOutFcn else {
+            return
+        }
 
-        timer2 = DispatchSource.makeTimerSource(flags: [], queue: .global(qos: .background))
-        timer2?.schedule(deadline: .now(), repeating: 1.0)
-        timer2?.setEventHandler {
-            if sshDaemon.checkTerminal(session: session, terminalIdx: 0) {
-                return
-            }
-            timer2?.cancel()
+        Task {
+            defer {
+                DispatchQueue.main.async {
+                    handler.stdInFcn = nil
+                    handler.stdOutFcn = nil
+                    handler.screeSizeChange = nil
+                }
 
-            DispatchQueue.main.async {
-                handler.stdInFcn = nil
-                handler.stdOutFcn = nil
-                handler.screeSizeChane = nil
+                Task {
+                    for session1 in session_list.reversed() {
+                        await sshDaemon.disconnect(session: session1)
+                    }
+                }
+                DispatchQueue.main.async {
+                    isShowing = false
+                }
+                DispatchQueue.main.async {
+                    removeTag()
+                }
             }
 
-            for session1 in session_list.reversed() {
-                sshDaemon.disconnect(session: session1)
+            do {
+                try await sshDaemon.createTerminal(session: session, stdinFnc: stdInFcn, stdoutFnc: stdOutFcn, stderrFnc: nil)
+                if await sshDaemon.waitTerminal(session: session, terminalIdx: 0, timeout: Duration.seconds(20)) {
+                    while await sshDaemon.checkTerminal(session: session, terminalIdx: 0) {
+                        try await Task.sleep(for: Duration.seconds(1))
+                    }
+                }
             }
-            DispatchQueue.main.async {
-                isShowing = false
-            }
-            DispatchQueue.main.async {
-                removeTag()
+            catch {
             }
         }
     }
@@ -341,13 +326,13 @@ struct ServerConnection: View {
         }
     }
     
-    func browser() {
+    func browser() async {
         guard let session = session else {
             return
         }
 
         let localPort = UInt16.random(in: 1024...UInt16.max)
-        if sshDaemon.localPortFoward(session: session, localPort: localPort, remoteHost: "localhost", remotePort: UInt16(forwardPort)) {
+        if await sshDaemon.localPortFoward(session: session, localPort: localPort, remoteHost: "localhost", remotePort: UInt16(forwardPort)) {
             DispatchQueue.main.async {
                 guard var curTab = tabData.tabData[tabTag] else {
                     return
@@ -400,7 +385,7 @@ struct ServerConnection: View {
             .opacity(isShowing ? 0: 1)
         }
         .padding()
-        .onAppear() {
+        .task {
             if isInit {
                 return
             }
@@ -412,13 +397,11 @@ struct ServerConnection: View {
             if !isTerminalMode {
                 term.expandLF = true
             }
-            
-            queue.name = "Server"
-            queue.qualityOfService = .userInteractive
-            queue.maxConcurrentOperationCount = 1
-
-            DispatchQueue.global().async {
-                connect()
+            do {
+                try await connect()
+            }
+            catch {
+                removeTag()
             }
         }
     }

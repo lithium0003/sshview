@@ -16,6 +16,7 @@ extension UIApplication {
 struct EditServer: View {
     @EnvironmentObject var serverProfile: ServerProfile
     @EnvironmentObject var userProfile: UserProfile
+    @EnvironmentObject var target: Targets
 
     var serverIdx: Int
     var duplicate = false
@@ -24,7 +25,6 @@ struct EditServer: View {
     @State private var hostname = ""
     @State private var portstr = ""
     @State private var serverKey = ""
-    @State private var userid = UUID()
     @State private var proxyServer = UUID()
     @State private var connType = 0
     @State private var runCommand = ""
@@ -33,8 +33,6 @@ struct EditServer: View {
     @State private var grepCommand = ""
     @State private var grepCommandType = 0
 
-    @Binding var isShowCurrentView: Bool
-    @State private var isShowSubView = false
     @State private var showSheet = false
 
     var body: some View {
@@ -63,16 +61,14 @@ struct EditServer: View {
                     Spacer()
                     HStack{
                         Text("User identity")
-                        Picker("User identity", selection: $userid) {
+                        Picker("User identity", selection: $target.userId) {
                             Text("(select)")
                             ForEach(userProfile.userid) { item in
                                 Text(item.title)
                             }
                         }
                         Text(" or ")
-                        Button(action: {
-                            self.isShowSubView = true
-                        }) {
+                        NavigationLink(value: Dest.addnewid) {
                             Image(systemName: "person.badge.plus")
                             Text("New")
                         }
@@ -130,7 +126,7 @@ struct EditServer: View {
                         guard !portstr.isEmpty, let port = Int(portstr) else {
                             return
                         }
-                        guard userProfile.userid.first(where: { $0.id == userid}) != nil else {
+                        guard userProfile.userid.first(where: { $0.id == target.userId}) != nil else {
                             return
                         }
                         var proxy: UUID?
@@ -165,24 +161,24 @@ struct EditServer: View {
                             serverProfile.servers[serverIdx].title = idname
                             serverProfile.servers[serverIdx].remoteHost = hostname
                             serverProfile.servers[serverIdx].remotePort = port
-                            serverProfile.servers[serverIdx].userIDtag = userid
+                            serverProfile.servers[serverIdx].userIDtag = target.userId
                             serverProfile.servers[serverIdx].proxyServerID = proxy
                             serverProfile.servers[serverIdx].serverCommand = remoteCommand
                             serverProfile.servers[serverIdx].grepPortFoward = grepStr
                             serverProfile.servers[serverIdx].portFoward = forwardPort
                         }
                         else {
-                            let newItem = ServerItem(title: idname, remoteHost: hostname, remotePort: port, userIDtag: userid, proxyServerID: proxy, serverCommand: remoteCommand, grepPortFoward: grepStr, portFoward: forwardPort)
+                            let newItem = ServerItem(title: idname, remoteHost: hostname, remotePort: port, userIDtag: target.userId, proxyServerID: proxy, serverCommand: remoteCommand, grepPortFoward: grepStr, portFoward: forwardPort)
                             serverProfile.servers.append(newItem)
                         }
 
-                        isShowCurrentView = false
+                        _ = target.showTarget.popLast()
                     }) {
                         Text("Done").font(.title)
                     }
                     Spacer()
                     Button(role: .cancel, action: {
-                        isShowCurrentView = false
+                        _ = target.showTarget.popLast()
                     }) {
                         Text("Cancel").font(.title)
                     }
@@ -197,7 +193,7 @@ struct EditServer: View {
                     idname = serverProfile.servers[serverIdx].title
                     hostname = serverProfile.servers[serverIdx].remoteHost
                     portstr = String(serverProfile.servers[serverIdx].remotePort)
-                    userid = serverProfile.servers[serverIdx].userIDtag
+                    target.userId = serverProfile.servers[serverIdx].userIDtag
                     proxyServer = serverProfile.servers[serverIdx].proxyServerID ?? UUID()
                     serverKey = serverProfile.servers[serverIdx].serverKeyHash.map({ String(format: "%02x", $0) }).joined(separator: ":")
                     if let command = serverProfile.servers[serverIdx].serverCommand {
@@ -220,10 +216,6 @@ struct EditServer: View {
                         connType = 0
                     }
                 }
-            }
-
-            NavigationLink(destination: AddNewId(newId: $userid, isShowSubView: $isShowSubView), isActive: $isShowSubView) {
-                EmptyView()
             }
         }
         .sheet(isPresented: $showSheet) {
@@ -311,9 +303,7 @@ struct EditServer: View {
 }
 
 struct EditServer_Previews: PreviewProvider {
-    @State static var isShow = false
-    
     static var previews: some View {
-        EditServer(serverIdx: 0, isShowCurrentView: $isShow)
+        EditServer(serverIdx: 0)
     }
 }

@@ -11,10 +11,7 @@ struct ServerList: View {
     @EnvironmentObject var serverProfile: ServerProfile
     @EnvironmentObject var userProfile: UserProfile
     @EnvironmentObject var tabData: TabDataList
-    @State private var editMode = false
-    @State private var duplicate = false
-    @State private var serverIdx = 0
-    @Binding var isShowing: Bool
+    @EnvironmentObject var target: Targets
 
     var body: some View {
         VStack {
@@ -22,7 +19,7 @@ struct ServerList: View {
                 ForEach(serverProfile.servers, id: \.id) { serveritem in
                     Button(action: {
                         DispatchQueue.main.async {
-                            isShowing = false
+                            _ = target.showTarget.popLast()
                         }
                         DispatchQueue.main.async {
                             let tag = UUID()
@@ -37,27 +34,13 @@ struct ServerList: View {
                         ServerRow(serverItem: serveritem)
                     }
                     .contextMenu(menuItems: {
-                        Button(action: {
-                            serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
-                            editMode = true
-                            duplicate = false
-                        }, label: {
-                            Text("Edit")
-                        })
-                        Button(action: {
-                            serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
-                            editMode = true
-                            duplicate = true
-                        }, label: {
-                            Text("Duplicate")
-                        })
+                        let serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
+                        NavigationLink("Edit", value: Dest.editserver(serverIdx, false))
+                        NavigationLink("Duplicate", value: Dest.editserver(serverIdx, true))
                     })
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button("Edit") {
-                            serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
-                            editMode = true
-                            duplicate = false
-                        }
+                        let serverIdx = serverProfile.servers.firstIndex(of: serveritem) ?? 0
+                        NavigationLink("Edit", value: Dest.editserver(serverIdx, false))
                         .tint(.green)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -72,32 +55,21 @@ struct ServerList: View {
                 }
             }
             .navigationBarTitle(Text("Server list"), displayMode: .inline)
-            .navigationBarItems(trailing: Button(action: {
-                // button activates link
-                self.duplicate = false
-                self.serverIdx = -1
-                self.editMode = true
-            }) {
-                 Image(systemName: "plus")
-                     .resizable()
-                     .padding(6)
-                     .frame(width: 24, height: 24)
-                     .background(Color.green)
-                     .clipShape(Circle())
-                     .foregroundColor(.white)
+            .navigationBarItems(trailing: NavigationLink(value: Dest.editserver(-1, false)) {
+                Image(systemName: "plus")
+                    .resizable()
+                    .padding(6)
+                    .frame(width: 24, height: 24)
+                    .background(Color.green)
+                    .clipShape(Circle())
+                    .foregroundColor(.white)
             } )
-            
-            // invisible link inside NavigationView for add mode
-            NavigationLink(destination: EditServer(serverIdx: serverIdx, duplicate: duplicate, isShowCurrentView: $editMode),
-                           isActive: $editMode) { EmptyView() }
         }
     }
 }
 
 struct ServerList_Previews: PreviewProvider {
-    @State static var isShowing = false
-    
     static var previews: some View {
-        ServerList(isShowing: $isShowing)
+        ServerList()
     }
 }

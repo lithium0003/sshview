@@ -8,6 +8,18 @@
 import SwiftUI
 import libssh
 
+enum Dest: Hashable {
+    case connect
+    case user
+    case editserver(Int, Bool)
+    case addnewid
+}
+
+class Targets: ObservableObject {
+    @Published var showTarget: [Dest] = []
+    @Published var userId: UUID = UUID()
+}
+
 @main
 struct sshviewApp: App {
     var body: some Scene {
@@ -17,6 +29,7 @@ struct sshviewApp: App {
                 .environmentObject(UserProfile())
                 .environmentObject(TabDataList())
                 .environmentObject(SSHDaemon())
+                .environmentObject(Targets())
         }
     }
 }

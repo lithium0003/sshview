@@ -221,7 +221,7 @@ struct InvisibleTextViewWrapper: UIViewRepresentable {
 class stdHandlers: ObservableObject {
     @Published var stdOutFcn: ((ArraySlice<UInt8>)->Void)?
     @Published var stdInFcn: (()->[UInt8]?)?
-    @Published var screeSizeChane: ((Int,Int)->Void)?
+    @Published var screeSizeChange: ((Int,Int)->Void)?
 }
 
 class ScreenChar {
@@ -527,8 +527,8 @@ class consoleScreen: ObservableObject {
     var screenText: [[ScreenChar?]] = [[ScreenChar?]](repeating: [ScreenChar?](repeating: nil, count: 80), count: 24)
     var onUpdate: (()->Void)?
     
-    func clearAll() {
-        screenText = [[ScreenChar?]](repeating: [ScreenChar?](repeating: nil, count: 80), count: 24)
+    func clearAll(width: Int = 80, height: Int = 24) {
+        screenText = [[ScreenChar?]](repeating: [ScreenChar?](repeating: nil, count: width), count: height)
         curX = 0
         curY = 0
         screenStartLine = 0
@@ -551,7 +551,7 @@ class consoleScreen: ObservableObject {
         let s = NSAttributedString(string: " ", attributes: stringAttributes).boundingRect(with: UIScreen.main.bounds.size, context: nil)
         let newSize = (width: Int(ceil(size.width) / floor(s.width)), height: Int(ceil(size.height) / floor(s.height)))
         print(newSize)
-
+        
         for i in 0..<screenText.count {
             if screenText[i].count < newSize.width {
                 screenText[i].append(contentsOf: [ScreenChar?](repeating: nil, count: newSize.width - screenText[i].count))
@@ -566,6 +566,9 @@ class consoleScreen: ObservableObject {
                 screenText.append([ScreenChar?](repeating: nil, count: screenWidth))
             }
         }
+        for i in (screenStartLine + screenHeight)..<screenText.count {
+            screenText[i] = [ScreenChar?](repeating: nil, count: newSize.width)
+        }
 
         if curX >= screenWidth {
             curX = screenWidth - 1
@@ -574,7 +577,6 @@ class consoleScreen: ObservableObject {
             screenStartLine += (curY - screenHeight) + 1
             curY = screenHeight - 1
         }
-        
         return newSize
     }
     
@@ -668,11 +670,7 @@ class consoleScreen: ObservableObject {
                 }
             }
         case 2:
-            for y in 0..<screenHeight {
-                for x in 0..<screenWidth {
-                    screenText[screenStartLine+y][x] = nil
-                }
-            }
+            clearAll(width: screenWidth, height: screenHeight)
         default:
             break
         }
@@ -731,8 +729,8 @@ class consoleScreen: ObservableObject {
 
     func deleteRight(c: Int) {
         for _ in 0..<c {
-            if c + curX < screenWidth, c + curX < screenText[screenStartLine+curY].count {
-                screenText[screenStartLine+curY].remove(at: curX + c)
+            if curX < screenWidth, curX < screenText[screenStartLine+curY].count {
+                screenText[screenStartLine+curY].remove(at: curX)
             }
             let addcount = screenWidth - screenText[screenStartLine+curY].count
             if addcount > 0 {
@@ -744,9 +742,9 @@ class consoleScreen: ObservableObject {
     }
 
     func eraseRight(c: Int) {
-        for _ in 0..<c {
-            if c + curX < screenWidth {
-                screenText[screenStartLine+curY][curX + c] = nil
+        for i in 0..<c {
+            if curX + i < screenWidth {
+                screenText[screenStartLine+curY][curX + i] = nil
             }
         }
     }
@@ -825,9 +823,10 @@ class consoleScreen: ObservableObject {
         writeCur(nil)
     }
     
-    func SPACE() {
-        writeCur(nil)
-        incCur()
+    func SPACE(_ count: Int = 1) {
+        for _ in 0..<count {
+            screenText[screenStartLine+curY].insert(nil, at: curX)
+        }
     }
     
     func TAB(_ count: Int = 1) {
@@ -1177,9 +1176,7 @@ class TerminalScreen: ObservableObject {
                         // Insert Ps space (SP) characters starting at the cursor position.
                         // The default value of Ps is 1.
                         let count = Int(Pt) ?? 1
-                        for _ in 0..<count {
-                            screen.SPACE()
-                        }
+                        screen.SPACE(count)
                     }
                     else if command == "A" {
                         // CUU
@@ -1860,6 +1857,7 @@ class TerminalScreen: ObservableObject {
         }
         screenBuffer = []
         screen.drawView()
+        print(screen.curX, screen.curY)
     }
 }
 

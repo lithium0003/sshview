@@ -10,24 +10,35 @@ import SwiftUI
 struct MainView: View {
     @EnvironmentObject var serverProfile: ServerProfile
     @EnvironmentObject var userProfile: UserProfile
-    @State var isShowServer = false
+    @EnvironmentObject var target: Targets
     
     var body: some View {
-        NavigationView {
+        NavigationStack(path: $target.showTarget) {
             List {
                 Section("Connect") {
-                    NavigationLink("Servers", destination: ServerList(isShowing: $isShowServer), isActive: $isShowServer)
+                    NavigationLink("Servers", value: Dest.connect)
                 }
                 Section("User") {
-                    NavigationLink("User ID", destination: UserIdList())
+                    NavigationLink("User ID", value: Dest.user)
                 }
                 Section("Help") {
                     Link("Online Help", destination: URL(string: "https://lithium03.info/ios/sshview.en.html#help")!)
                 }
             }
             .navigationTitle("SSH View")
+            .navigationDestination(for: Dest.self) { dst in
+                switch dst {
+                case .connect:
+                    ServerList()
+                case .user:
+                    UserIdList()
+                case let .editserver(idx, dup):
+                    EditServer(serverIdx: idx, duplicate: dup)
+                case .addnewid:
+                    AddNewId()
+                }
+            }
         }
-        .navigationViewStyle(.stack)
     }
 }
 
